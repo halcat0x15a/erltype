@@ -5,12 +5,17 @@ import scala.collection.mutable.HashMap
 class ErlTypeListener(global: HashMap[String, ErlType]) extends ErlangBaseListener {
 
   override def exitFunctionClause(ctx: ErlangParser.FunctionClauseContext): Unit = {
-    ctx.check(global.toMap).flatMap { (env, typ) =>
+    if (!ctx.getText.isEmpty) {
       val name = ctx.tokAtom.getText
-      ErlTyper.unify(env, global.getOrElse(name, ErlVar(name)), typ).map { typ =>
-        global(name) = typ
+      ctx.check(global.toMap - name).flatMap { (env, typ) =>
+        Success(env, ErlTyper.union(global.getOrElse(name, ErlVar(name)), ErlTyper.resolve(env, typ)))
+      } match {
+        case Success(_, typ) => global(name) = typ
+        case Failure(message) => throw ErlTypeListenerException(message)
       }
     }
   }
 
 }
+
+case class ErlTypeListenerException(message: String) extends Exception(message)

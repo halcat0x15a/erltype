@@ -13,11 +13,18 @@ object Main extends App {
     if (Files.exists(path)) {
       val parser = new ErlangParser(new CommonTokenStream(new ErlangLexer(new ANTLRInputStream(Files.newInputStream(path)))))
       val env = new HashMap[String, ErlType]
-      env("*") = ErlFunction(List(ErlInteger, ErlInteger), ErlInteger)
-      env("-") = ErlFunction(List(ErlInteger, ErlInteger), ErlInteger)
+      env("*") = ErlFunction(List(ErlType.Number, ErlType.Number), ErlType.Number)
+      env("-") = ErlFunction(List(ErlType.Number, ErlType.Number), ErlType.Number)
+      env(">") = ErlFunction(List(ErlType.Number, ErlType.Number), ErlType.Boolean)
       parser.addParseListener(new ErlTypeListener(env))
-      parser.forms()
-      println(env)
+      try {
+        parser.forms()
+        env.foreach {
+          case (key, value) => println(s"$key : ${value.display}")
+        }
+      } catch {
+        case ErlTypeListenerException(message) => println(message)
+      }
     }
   }
 }
