@@ -144,6 +144,8 @@ object ErlTyper {
 
   implicit object Expr150Context extends Expr150Context
 
+  implicit object Expr100Context extends Expr100Context
+
   implicit object ExprContext extends ExprContext
 
   implicit object FunctionCallContext extends FunctionCallContext
@@ -153,5 +155,9 @@ object ErlTyper {
   implicit object ListComprehensionContext extends ListComprehensionContext
 
   implicit object FunctionClause extends FunctionClause
+
+  implicit object FunExprContext extends FunExprContext
+
+  implicit object FunClausesContext extends FunClausesContext
 
 }

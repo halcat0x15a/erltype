@@ -20,6 +20,8 @@ object Main extends App {
       env("<") = ErlFunction(List(ErlType.Number, ErlType.Number), ErlType.Boolean)
       env("++") = ErlFunction(List(ErlList(ErlVar("Elem")), ErlList(ErlVar("Elem"))), ErlList(ErlVar("Elem")))
       env("not") = ErlFunction(List(ErlType.Boolean), ErlType.Boolean)
+      env("is_list") = ErlFunction(List(ErlVar("Any")), ErlType.Boolean)
+      env("length") = ErlFunction(List(ErlList(ErlVar("Something"))), ErlInteger)
       parser.addParseListener(new ErlTypeListener(env))
       try {
         parser.forms()

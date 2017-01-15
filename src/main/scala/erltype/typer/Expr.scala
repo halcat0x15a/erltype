@@ -9,6 +9,7 @@ trait ExprMaxContext extends ErlTyper[ErlangParser.ExprMaxContext] {
     ctx.tokVar.check(env) orElse
     ctx.atomic.check(env) orElse
     ctx.expr.check(env) orElse
+    ctx.funExpr.check(env) orElse
     ctx.list.check(env) orElse
     ctx.listComprehension.check(env)
 }
@@ -56,8 +57,19 @@ trait Expr150Context extends ErlTyper[ErlangParser.Expr150Context] {
   def check(env: TypeEnv, ctx: ErlangParser.Expr150Context) = ErlTyper.operation(env, ctx.expr160.asScala, Some("orelse"))
 }
 
+trait Expr100Context extends ErlTyper[ErlangParser.Expr100Context] {
+  def check(env: TypeEnv, ctx: ErlangParser.Expr100Context) = {
+    ctx.expr150.asScala match {
+      case lhs +: rhs +: _ => lhs.check(env).flatMap { (env, lhs) =>
+        rhs.check(env).flatMap(ErlTyper.unify(_, lhs, _))
+      }
+      case expr +: _ => expr.check(env)
+    }
+  }
+}
+
 trait ExprContext extends ErlTyper[ErlangParser.ExprContext] {
-  def check(env: TypeEnv, ctx: ErlangParser.ExprContext) = ctx.expr100.expr150.get(0).check(env)
+  def check(env: TypeEnv, ctx: ErlangParser.ExprContext) = ctx.expr100.check(env)
 }
 
 trait FunctionCallContext extends ErlTyper[ErlangParser.FunctionCallContext] {
@@ -95,5 +107,33 @@ trait ListComprehensionContext extends ErlTyper[ErlangParser.ListComprehensionCo
         }
       }
     }.map(ErlList(_))
+  }
+}
+
+trait FunExprContext extends ErlTyper[ErlangParser.FunExprContext] {
+  def check(env: TypeEnv, ctx: ErlangParser.FunExprContext) = {
+    ctx.funClauses.check(env)
+  }
+}
+
+trait FunClausesContext extends ErlTyper[ErlangParser.FunClausesContext] {
+  def check(env: TypeEnv, ctx: ErlangParser.FunClausesContext) = {
+    val funClauses = ctx.funClause.asScala
+    ctx.funClause.asScala.foldLeft(Success(env, ErlVar("Anonymous")): Result[ErlType]) { (result, funClause) =>
+      result.flatMap { (env, typ) =>
+        val params = Option(funClause.argumentList.exprs).toList.flatMap(_.expr.asScala)
+        ErlTyper.checkAll(env, params).flatMap { (env, params) =>
+          Option(funClause.clauseGuard.guard).map { guard =>
+            ErlTyper.checkAll(env, guard.exprs.asScala.flatMap(_.expr.asScala)).flatMap { (env, types) =>
+              ErlTyper.unifyAll(env, List.fill(types.size)(ErlType.Boolean), types)
+            }
+          }.getOrElse(Success(env, ())).flatMap { (env, _) =>
+            ErlTyper.checkAll(env, funClause.clauseBody.exprs.expr.asScala).map { body =>
+              ErlTyper.union(typ, ErlFunction(params, body.last))
+            }
+          }
+        }
+      }
+    }
   }
 }
