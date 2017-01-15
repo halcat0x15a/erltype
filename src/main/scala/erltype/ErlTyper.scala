@@ -14,6 +14,7 @@ object ErlTyper {
         ErlFunction((params zip args).map { case (param, arg) => union(param, arg) }, union(ret, body))
       case (ErlVar(_), _) => b
       case (_, ErlVar(_)) => a
+      case (ErlList(a), ErlList(b)) => ErlList(union(a, b))
       case (ErlUnion(xs), ErlUnion(ys)) => ErlUnion((xs ::: ys).distinct)
       case (ErlUnion(xs), _) => ErlUnion((b :: xs).distinct)
       case (_, ErlUnion(xs)) => ErlUnion((a :: xs).distinct)
@@ -26,14 +27,19 @@ object ErlTyper {
     typ match {
       case ErlFunction(args, body) => ErlFunction(args.map(resolve(env, _)), resolve(env, body))
       case ErlUnion(types) => ErlUnion(types.map(resolve(env, _)))
-      case ErlVar(name) => env.getOrElse(name, typ)
+      case ErlVar(name) => env.get(name).map(v => if (v == typ) typ else resolve(env, v)).getOrElse(typ)
+      case ErlList(typ) => ErlList(resolve(env, typ))
       case _ => typ
     }
 
   def unify(env: TypeEnv, param: ErlType, arg: ErlType): Result[ErlType] =
     (param, arg) match {
+      case (ErlVar(x), ErlVar(y)) if x == y => Success(env, param)
       case (ErlVar(name), _) => Success(env.updated(name, arg), arg)
+      //env.get(name).fold(Success(env.updated(name, arg), arg): Result[ErlType])(param => unify(env, resolve(env, param), arg))
       case (_, ErlVar(name)) => Success(env.updated(name, param), param)
+      //env.get(name).fold(Success(env.updated(name, param), param): Result[ErlType])(arg => unify(env, param, resolve(env, arg)))
+      case (ErlList(a), ErlList(b)) => unify(env, a, b).map(ErlList(_))
       case (ErlFunction(params, ret), ErlFunction(args, body)) =>
         unifyAll(env, params, args).flatMap { (env, types) =>
           unify(env, ret, body).map(ErlFunction(types, _))
@@ -70,6 +76,7 @@ object ErlTyper {
 
   def application(env: TypeEnv, f: ErlType, args: List[ErlType]): Result[ErlType] = {
     f match {
+      case ErlVar(name) => unify(env, f, ErlFunction(args, ErlVar("AppReturnType"))).flatMap(application(_, _, args))
       case ErlAtom(name) => env.get(name).map(application(env, _, args)).getOrElse(Result.NotFound(name))
       case ErlFunction(params, body) => unifyAll(env, params, args).map(_ => body)
       case _ => Failure(s"$f is not function")
@@ -142,6 +149,8 @@ object ErlTyper {
   implicit object FunctionCallContext extends FunctionCallContext
 
   implicit object ListContext extends ListContext
+
+  implicit object ListComprehensionContext extends ListComprehensionContext
 
   implicit object FunctionClause extends FunctionClause
 
