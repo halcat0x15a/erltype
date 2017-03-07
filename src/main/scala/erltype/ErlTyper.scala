@@ -1,6 +1,6 @@
 package erltype
 
-case class TypingScheme[A](env: Map[String, ErlType[Minus]], typ: A) {
+case class TypingScheme[A](env: Delta, typ: A) {
   def map[B](f: A => B): TypingScheme[B] = flatMap(a => TypingScheme(Map.empty, f(a)))
   def flatMap[B](f: A => TypingScheme[B]): TypingScheme[B] = {
     val scheme = f(typ)
@@ -9,20 +9,26 @@ case class TypingScheme[A](env: Map[String, ErlType[Minus]], typ: A) {
     }
     TypingScheme(delta, scheme.typ)
   }
+  override def toString = {
+    val delta = env.map { case (k, v) => s"$k: $v" }.mkString(", ")
+    s"[$delta]$typ"
+  }
+}
+
+object TypingScheme {
+
+  implicit class PlusOp(val scheme: TypingScheme[ErlType[Plus]]) {
+    def inst(x: ErlType[Plus], y: ErlType[Minus]): TypingScheme[ErlType[Plus]] = {
+      val subst = ErlType.biunify(x, y)
+      TypingScheme(scheme.env.mapValues(subst(_)), subst(scheme.typ))
+    }
+  }
+
 }
 
 trait ErlTyper[A] {
-  def check(env: Map[String, TypingScheme[ErlType[Plus]]], ctx: A): TypingScheme[ErlType[Plus]]
+  def check_+(env: Pi, ctx: A): TypingScheme[ErlType[Plus]]
+  def check_-(env: Delta, ctx: A): TypingScheme[ErlType[Minus]]
 }
 
-object ErlTyper extends ErlTypers {
-
-  def inst(scheme: TypingScheme[ErlType[Plus]], x: ErlType[Plus], y: ErlType[Minus]): TypingScheme[ErlType[Plus]] = {
-    val subst = ErlType.biunify(x, y)
-    TypingScheme(scheme.env.mapValues(subst(_)), subst(scheme.typ))
-  }
-
-  def show(scheme: TypingScheme[ErlType[Plus]]): String =
-    s"""[${scheme.env.map { case (k, v) => s"$k : ${v.show}" }.mkString(", ")}](${scheme.typ.show})"""
-
-}
+object ErlTyper extends ErlTypers

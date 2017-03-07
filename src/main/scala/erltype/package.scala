@@ -1,7 +1,12 @@
 package object erltype {
 
+  type Delta = Map[String, ErlType[Minus]]
+
+  type Pi = Map[String, TypingScheme[ErlType[Plus]]]
+
   implicit class Check[A](val ctx: A) extends AnyVal {
-    def check(env: Map[String, TypingScheme[ErlType[Plus]]])(implicit A: ErlTyper[A]): TypingScheme[ErlType[Plus]] = A.check(env, ctx)
+    def check_+(env: Pi)(implicit A: ErlTyper[A]) = A.check_+(env, ctx)
+    def check_-(env: Delta)(implicit A: ErlTyper[A]) = A.check_-(env, ctx)
   }
 
 }

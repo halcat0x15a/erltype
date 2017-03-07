@@ -9,12 +9,12 @@ sealed abstract class Polarity {
 
 sealed abstract class Plus extends Polarity {
   type Inverse = Minus
-  val inverse = Polarity.Minus
+  def inverse = Polarity.Minus
 }
 
 sealed abstract class Minus extends Polarity {
   type Inverse = Plus
-  val inverse = Polarity.Plus
+  def inverse = Polarity.Plus
 }
 
 object Polarity {
@@ -22,25 +22,46 @@ object Polarity {
   implicit case object Minus extends Minus
 }
 
-sealed abstract class ErlType[A <: Polarity](val show: String)
+sealed abstract class ErlType[A <: Polarity]
 
-case class ErlInteger[A <: Polarity]() extends ErlType[A]("integer")
+case class ErlInteger[A <: Polarity]() extends ErlType[A] {
+  override def toString = "integer"
+}
 
-case class ErlFloat[A <: Polarity]() extends ErlType[A]("float")
+case class ErlFloat[A <: Polarity]() extends ErlType[A] {
+  override def toString = "float"
+}
 
-case class ErlChar[A <: Polarity]() extends ErlType[A]("char")
+case class ErlChar[A <: Polarity]() extends ErlType[A] {
+  override def toString = "char"
+}
 
-case class ErlString[A <: Polarity]() extends ErlType[A]("string")
+case class ErlString[A <: Polarity]() extends ErlType[A] {
+  override def toString = "string"
+}
 
-case class ErlAtom[A <: Polarity](name: String) extends ErlType[A]("\"name\"")
+case class ErlAtom[A <: Polarity](name: String) extends ErlType[A] {
+  override def toString = s""""$name""""
+}
 
-case class ErlUnion(types: List[ErlType[Plus]]) extends ErlType[Plus](types.map(_.show).mkString("(", " | ", ")"))
+case class ErlUnion(types: List[ErlType[Plus]]) extends ErlType[Plus] {
+  override def toString = if (types.isEmpty) "bottom" else types.mkString("(", " | ", ")")
+}
 
-case class ErlIntersection(types: List[ErlType[Minus]]) extends ErlType[Minus](types.map(_.show).mkString("(", " & ", ")"))
+case class ErlIntersection(types: List[ErlType[Minus]]) extends ErlType[Minus] {
+  override def toString = if (types.isEmpty) "top" else types.mkString("(", " & ", ")")
+}
 
-case class ErlFunction[A <: Polarity](params: List[ErlType[A#Inverse]], typ: ErlType[A]) extends ErlType[A](s"""((${params.map(_.show).mkString(", ")}) -> ${typ.show})""")
+case class ErlFunction[A <: Polarity](params: List[ErlType[A#Inverse]], ret: ErlType[A]) extends ErlType[A] {
+  override def toString = {
+    val ps = params.mkString("(", ", ", ")")
+    s"($ps -> $ret)"
+  }
+}
 
-case class ErlVar[A <: Polarity](id: Long) extends ErlType[A](id.toString)
+case class ErlVar[A <: Polarity](id: Long) extends ErlType[A] {
+  override def toString = id.toString
+}
 
 sealed abstract class BiSubst
 
@@ -66,6 +87,10 @@ object BiSubsts {
 
 object ErlType {
 
+  val Top: ErlType[Minus] = ErlIntersection(Nil)
+
+  val Bottom: ErlType[Plus] = ErlUnion(Nil)
+
   private val idGen: AtomicLong = new AtomicLong
 
   def fresh[A <: Polarity]: ErlVar[A] = ErlVar(idGen.getAndIncrement)
@@ -82,8 +107,8 @@ object ErlType {
   def bisubst[A <: Polarity, B <: Polarity](id: Long, x: ErlType[A], y: ErlType[B])(implicit A: A, B: B): ErlType[A] =
     x match {
       case ErlFunction(xs, x) => ErlFunction(xs.map(bisubst(id, _, y)(A.inverse, B)), bisubst(id, x, y))
-      case ErlUnion(xs) => ErlUnion(xs.map(bisubst(id, _, y)))
-      case ErlIntersection(xs) => ErlIntersection(xs.map(bisubst(id, _, y)))
+      case ErlUnion(xs) => xs.map(bisubst(id, _, y)).foldLeft(Bottom)(_ \/ _)
+      case ErlIntersection(xs) => xs.map(bisubst(id, _, y)).foldLeft(Top)(_ /\ _)
       case ErlVar(x) if x == id && A == B => y.asInstanceOf[ErlType[A]]
       case _ => x
     }
@@ -111,12 +136,13 @@ object ErlType {
         else
           BiSubsts(BiSubst_+(id, bisubst(id, x, fresh[Plus]) \/ ErlVar(id)))
       case _ =>
-        throw new RuntimeException
+        throw new RuntimeException(s"$x is not $y")
     }
 
   implicit class PlusOp(val self: ErlType[Plus]) extends AnyVal {
     def \/(that: ErlType[Plus]): ErlType[Plus] =
       (self, that) match {
+        case _ if self == that => self
         case (ErlUnion(xs), ErlUnion(ys)) => ErlUnion(xs ::: ys)
         case (ErlUnion(Nil), _) => that
         case (_, ErlUnion(Nil)) => self
@@ -128,6 +154,7 @@ object ErlType {
   implicit class MinusOp(val self: ErlType[Minus]) extends AnyVal {
     def /\(that: ErlType[Minus]): ErlType[Minus] =
       (self, that) match {
+        case _ if self == that => self
         case (ErlIntersection(xs), ErlIntersection(ys)) => ErlIntersection(xs ::: ys)
         case (ErlIntersection(Nil), _) => that
         case (_, ErlIntersection(Nil)) => self
