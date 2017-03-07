@@ -13,6 +13,24 @@ trait ErlTypers {
     }
   }
 
+  def list_+[A](env: Pi, a: A)(head: A => ErlangParser.ExprContext)(tail: A => ErlangParser.TailContext): TypingScheme[ErlType[Plus]] = {
+    Option(head(a)).map { head =>
+      for {
+        h <- head.check_+(env)
+        t <- list_+(env, tail(a))(_.expr)(_.tail)
+      } yield h \/ t
+    }.getOrElse(TypingScheme(Map.empty, ErlType.Bottom))
+  }
+
+  def list_-[A](env: Delta, a: A)(head: A => ErlangParser.ExprContext)(tail: A => ErlangParser.TailContext): TypingScheme[ErlType[Minus]] = {
+    Option(head(a)).map { head =>
+      for {
+        h <- head.check_-(env)
+        t <- list_-(env, tail(a))(_.expr)(_.tail)
+      } yield h /\ t
+    }.getOrElse(TypingScheme(Map.empty, ErlType.Top))
+  }
+
   def function(env: Pi, argumentList: ErlangParser.ArgumentListContext, body: ErlangParser.ClauseBodyContext): TypingScheme[ErlType[Plus]] = {
     val TypingScheme(delta, ret) = checkAll(env, body.exprs.expr.asScala).map(_.lastOption.getOrElse(ErlType.Bottom))
     Option(argumentList.exprs).toList.flatMap(_.expr.asScala).foldRight(TypingScheme(delta, List.empty[ErlType[Minus]])) {
@@ -185,8 +203,8 @@ trait ErlTypers {
 
   implicit def ListContext: ErlTyper[ErlangParser.ListContext] =
     new ErlTyper[ErlangParser.ListContext] {
-      def check_+(env: Pi, ctx: ErlangParser.ListContext) = ???
-      def check_-(env: Delta, ctx: ErlangParser.ListContext) = ???
+      def check_+(env: Pi, ctx: ErlangParser.ListContext) = list_+(env, ctx)(_.expr)(_.tail).map(ErlList(_))
+      def check_-(env: Delta, ctx: ErlangParser.ListContext) = list_-(env, ctx)(_.expr)(_.tail).map(ErlList(_))
     }
 
   implicit def ListComprehensionContext: ErlTyper[ErlangParser.ListComprehensionContext] =

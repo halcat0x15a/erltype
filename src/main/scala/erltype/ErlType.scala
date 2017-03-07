@@ -40,6 +40,10 @@ case class ErlString[A <: Polarity]() extends ErlType[A] {
   override def toString = "string"
 }
 
+case class ErlList[A <: Polarity](typ: ErlType[A]) extends ErlType[A] {
+  override def toString = s"[$typ]"
+}
+
 case class ErlAtom[A <: Polarity](name: String) extends ErlType[A] {
   override def toString = s""""$name""""
 }
@@ -97,6 +101,7 @@ object ErlType {
 
   def isFreeVar[A <: Polarity](id: Long, typ: ErlType[A]): Boolean =
     typ match {
+      case ErlList(x) => isFreeVar(id, x)
       case ErlFunction(xs, x) => xs.exists(isFreeVar(id, _)) || isFreeVar(id, x)
       case ErlUnion(xs) => xs.exists(isFreeVar(id, _))
       case ErlIntersection(xs) => xs.exists(isFreeVar(id, _))
@@ -106,6 +111,7 @@ object ErlType {
 
   def bisubst[A <: Polarity, B <: Polarity](id: Long, x: ErlType[A], y: ErlType[B])(implicit A: A, B: B): ErlType[A] =
     x match {
+      case ErlList(x) => ErlList(bisubst(id, x, y))
       case ErlFunction(xs, x) => ErlFunction(xs.map(bisubst(id, _, y)(A.inverse, B)), bisubst(id, x, y))
       case ErlUnion(xs) => xs.map(bisubst(id, _, y)).foldLeft(Bottom)(_ \/ _)
       case ErlIntersection(xs) => xs.map(bisubst(id, _, y)).foldLeft(Top)(_ /\ _)
@@ -117,6 +123,8 @@ object ErlType {
     (x, y) match {
       case _ if x == y =>
         BiSubsts.identity
+      case (ErlList(x), ErlList(y)) =>
+        biunify(x, y)
       case (ErlFunction(xs, x), ErlFunction(ys, y)) =>
         val f = xs.zip(ys).foldLeft(BiSubsts.identity) { case (f, (x, y)) => f compose biunify(f(y), f(x)) }
         f compose biunify(f(x), f(y))
@@ -125,11 +133,10 @@ object ErlType {
       case (_, ErlIntersection(ys)) =>
         ys.foldRight(BiSubsts.identity) { (y, f) => f compose biunify(f(x), f(y)) }
       case (ErlVar(id), _) =>
-        if (isFreeVar(id, y)) {
+        if (isFreeVar(id, y))
           BiSubsts(BiSubst_-(id, y /\ ErlVar(id)))
-        } else {
+        else
           BiSubsts(BiSubst_-(id, bisubst(id, y, fresh[Minus]) /\ ErlVar(id)))
-        }
       case (_, ErlVar(id)) =>
         if (isFreeVar(id, y))
           BiSubsts(BiSubst_+(id, x \/ ErlVar(id)))
@@ -144,8 +151,8 @@ object ErlType {
       (self, that) match {
         case _ if self == that => self
         case (ErlUnion(xs), ErlUnion(ys)) => ErlUnion(xs ::: ys)
-        case (ErlUnion(Nil), _) => that
-        case (_, ErlUnion(Nil)) => self
+        case (ErlUnion(xs), _) => ErlUnion(that :: xs)
+        case (_, ErlUnion(ys)) => ErlUnion(self :: ys)
         case (ErlFunction(xs, x), ErlFunction(ys, y)) => ErlFunction(xs.zip(ys).map { case (x, y) => x /\ y }, x \/ y)
         case _ => ErlUnion(List(self, that))
       }
@@ -156,8 +163,8 @@ object ErlType {
       (self, that) match {
         case _ if self == that => self
         case (ErlIntersection(xs), ErlIntersection(ys)) => ErlIntersection(xs ::: ys)
-        case (ErlIntersection(Nil), _) => that
-        case (_, ErlIntersection(Nil)) => self
+        case (ErlIntersection(xs), _) => ErlIntersection(that :: xs)
+        case (_, ErlIntersection(ys)) => ErlIntersection(self :: ys)
         case (ErlFunction(xs, x), ErlFunction(ys, y)) => ErlFunction(xs.zip(ys).map { case (x, y) => x \/ y }, x /\ y)
         case _ => ErlIntersection(List(self, that))
       }
