@@ -22,6 +22,7 @@ object TypingScheme {
       val subst = ErlType.biunify(x, y)
       TypingScheme(scheme.env.mapValues(subst(_)), subst(scheme.typ))
     }
+    def simplify: TypingScheme[ErlType[Plus]] = TypingScheme(scheme.env.mapValues(ErlType.simplify(_)), ErlType.simplify(scheme.typ))
   }
 
 }

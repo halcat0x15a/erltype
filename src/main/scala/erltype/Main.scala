@@ -15,7 +15,7 @@ object Main extends App {
       parser.addParseListener(new ErlangBaseListener {
         override def exitFunction(ctx: ErlangParser.FunctionContext): Unit = {
           try {
-            val scheme = ctx.check_+(env.toMap)
+            val scheme = ctx.check_+(env.toMap).simplify
             val name = ctx.functionClause.get(0).tokAtom.getText
             env(name) = scheme
             println(s"$name:$scheme")

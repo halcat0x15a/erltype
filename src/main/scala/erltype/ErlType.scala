@@ -49,11 +49,19 @@ case class ErlAtom[A <: Polarity](name: String) extends ErlType[A] {
 }
 
 case class ErlUnion(types: List[ErlType[Plus]]) extends ErlType[Plus] {
-  override def toString = if (types.isEmpty) "bottom" else types.mkString("(", " | ", ")")
+  override def toString = types.size match {
+    case 0 => "bottom"
+    case 1 => types.head.toString
+    case _ => types.mkString("(", " | ", ")")
+  }
 }
 
 case class ErlIntersection(types: List[ErlType[Minus]]) extends ErlType[Minus] {
-  override def toString = if (types.isEmpty) "top" else types.mkString("(", " & ", ")")
+  override def toString = types.size match {
+    case 0 => "top"
+    case 1 => types.head.toString
+    case _ => types.mkString("(", " & ", ")")
+  }
 }
 
 case class ErlFunction[A <: Polarity](params: List[ErlType[A#Inverse]], ret: ErlType[A]) extends ErlType[A] {
@@ -145,6 +153,23 @@ object ErlType {
       case _ =>
         throw new RuntimeException(s"$x is not $y")
     }
+
+  def collect[A <: Polarity](typ: ErlType[A])(implicit A: A): Vector[(Polarity, Long)] =
+    typ match {
+      case ErlList(x) => collect(x)
+      case ErlFunction(xs, x) => xs.foldLeft(Vector.empty[(Polarity, Long)])(_ ++ collect(_)(A.inverse)) ++ collect(x)
+      case ErlUnion(xs) => xs.foldLeft(Vector.empty[(Polarity, Long)])(_ ++ collect(_))
+      case ErlIntersection(xs) => xs.foldLeft(Vector.empty[(Polarity, Long)])(_ ++ collect(_))
+      case ErlVar(x) => Vector((A, x))
+      case _ => Vector.empty
+    }
+
+  def simplify[A <: Polarity](typ: ErlType[A])(implicit A: A): ErlType[A] = {
+    val vars = collect(typ).groupBy(_._1).mapValues(_.map(_._2).toSet)
+    val ps = vars.getOrElse(Polarity.Plus, Set.empty)
+    val ms = vars.getOrElse(Polarity.Minus, Set.empty)
+    ((ps | ms) -- (ps & ms)).foldLeft(typ)((typ, id) => bisubst(id, bisubst(id, typ, Top), Bottom))
+  }
 
   implicit class PlusOp(val self: ErlType[Plus]) extends AnyVal {
     def \/(that: ErlType[Plus]): ErlType[Plus] =
