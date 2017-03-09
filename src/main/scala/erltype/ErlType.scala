@@ -176,8 +176,9 @@ object ErlType {
       (self, that) match {
         case _ if self == that => self
         case (ErlUnion(xs), ErlUnion(ys)) => ErlUnion(xs ::: ys)
-        case (ErlUnion(xs), _) => ErlUnion(that :: xs)
+        case (ErlUnion(xs), _) => xs.foldRight(that)(_ \/ _)
         case (_, ErlUnion(ys)) => ErlUnion(self :: ys)
+        case (ErlList(x), ErlList(y)) => ErlList(x \/ y)
         case (ErlFunction(xs, x), ErlFunction(ys, y)) => ErlFunction(xs.zip(ys).map { case (x, y) => x /\ y }, x \/ y)
         case _ => ErlUnion(List(self, that))
       }
@@ -188,8 +189,9 @@ object ErlType {
       (self, that) match {
         case _ if self == that => self
         case (ErlIntersection(xs), ErlIntersection(ys)) => ErlIntersection(xs ::: ys)
-        case (ErlIntersection(xs), _) => ErlIntersection(that :: xs)
+        case (ErlIntersection(xs), _) => xs.foldRight(that)(_ /\ _)
         case (_, ErlIntersection(ys)) => ErlIntersection(self :: ys)
+        case (ErlList(x), ErlList(y)) => ErlList(x /\ y)
         case (ErlFunction(xs, x), ErlFunction(ys, y)) => ErlFunction(xs.zip(ys).map { case (x, y) => x \/ y }, x /\ y)
         case _ => ErlIntersection(List(self, that))
       }
