@@ -65,7 +65,7 @@ object ErlTyper_+ {
       def check_+(env: Pi, ctx: ErlangParser.TokVarContext) = {
         val name = ctx.getText
         val v = ErlType.fresh[Plus]
-        env.getOrElse(name, TypingScheme(Map(name -> ErlVar(v.id)), v))
+        env.getOrElse(name, TypingScheme(Map(name -> ErlVar(Polarity.Minus, v.id)), v))
       }
     }
 
@@ -116,7 +116,7 @@ object ErlTyper_+ {
           f <- ctx.expr800.check_+(env)
         } yield (f, types)
         val v = ErlType.fresh[Plus]
-        TypingScheme[ErlType[Plus]](delta, v).inst(f, ErlFunction[Minus](types, ErlVar(v.id)))
+        TypingScheme[ErlType[Plus]](delta, v).inst(f, ErlFunction[Minus](types, ErlVar(Polarity.Minus, v.id)))
       }
     }
 
