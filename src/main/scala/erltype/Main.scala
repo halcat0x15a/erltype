@@ -11,11 +11,19 @@ object Main extends App {
     val path = Paths.get(name)
     if (Files.exists(path)) {
       val parser = new ErlangParser(new CommonTokenStream(new ErlangLexer(new ANTLRInputStream(Files.newInputStream(path)))))
-      val env = HashMap.empty[String, TypingScheme[ErlType[Plus]]]
       val analyzer = new Analyzer
       parser.addParseListener(analyzer)
       parser.forms()
-      println(analyzer.getResult)
+      val env = HashMap.empty[String, TypingScheme[ErlType[Plus]]]
+      for (tree@FunTree(Some(name), _) <- analyzer.getResult) {
+        try {
+          val scheme = tree.check_+(env.toMap).simplify
+          env(name) = scheme
+          println(s"$name:$scheme")
+        } catch {
+          case e: Throwable => println(e.getMessage)
+        }
+      }
     }
   }
 }
