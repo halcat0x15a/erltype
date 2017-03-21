@@ -15,15 +15,15 @@ object Main extends App {
       parser.addParseListener(analyzer)
       parser.forms()
       val env = HashMap.empty[String, TypingScheme[ErlType[Plus]]]
-      env("++/2") = TypingScheme(Map.empty, ErlFunction(List(ErlList(ErlVar(0)), ErlList(ErlVar(0))), ErlList(ErlVar(0))))
-      env("--/2") = TypingScheme(Map.empty, ErlFunction(List(ErlList(ErlVar(0)), ErlList(ErlVar(0))), ErlList(ErlVar(0))))
+      env("++/2") = TypingScheme(Map.empty, FunctionType(List(ListType(VarType(0)), ListType(VarType(0))), ListType(VarType(0))))
+      env("--/2") = TypingScheme(Map.empty, FunctionType(List(ListType(VarType(0)), ListType(VarType(0))), ListType(VarType(0))))
       for (tree@FunTree(clauses) <- analyzer.getResult) {
         try {
           val Some(name) = clauses(0).name
           val arity = clauses(0).args.size
           val scheme = tree.check_+(env.toMap).simplify
           env(s"$name/$arity") = scheme
-          println(s"$name/$arity:$scheme")
+          println(s"$name/$arity:${TypingScheme.show(scheme)}")
         } catch {
           case e: Throwable => println(e.getMessage)
         }
