@@ -48,28 +48,60 @@ case class VarTree(value: String) extends ErlTree {
   }
 }
 
-case class ListTree(value: List[ErlTree]) extends ErlTree {
-  def check_+(env: Pi) = checkAll(env, value).map(types => ErlList(types.foldLeft(ErlType.Bottom)(_ \/ _)))
-  def check_-(env: Delta) =
-    value.foldRight(TypingScheme(Map.empty, ErlType.Top)) { (expr, scheme) =>
-      for {
-        types <- scheme
-        typ <- expr.check_-(env)
-      } yield typ /\ types
-    }
+sealed abstract class ListTree extends ErlTree
+
+case object NilTree extends ListTree {
+  def check_+(env: Pi) = TypingScheme(Map.empty, ErlList(ErlType.Bottom))
+  def check_-(env: Delta) = TypingScheme(env, ErlList(ErlType.Top))
 }
 
-case class FunClauseTree(args: List[ErlTree], guards: List[List[ErlTree]], body: List[ErlTree]) extends ErlTree {
+case class ConsTree(head: ErlTree, tail: ListTree) extends ListTree {
+  def check_+(env: Pi) = for {
+    h <- head.check_+(env)
+    t <- tail.check_+(env)
+  } yield {
+    val ErlList(typ) = t
+    ErlList(h \/ typ)
+  }
+  def check_-(env: Delta) = {
+    head.check_-(env) match {
+      case TypingScheme(env, h) =>
+        tail.check_-(env) match {
+          case TypingScheme(env, t) =>
+            val ErlList(typ) = t
+            TypingScheme(env, ErlList(h /\ typ): ErlType[Minus])
+        }
+    }
+  }
+}
+
+case class TailTree(tree: ErlTree) extends ListTree {
   def check_+(env: Pi) = {
-    val TypingScheme(delta, ret) = checkAll(env, body).map(_.lastOption.getOrElse(ErlType.Bottom))
-    args.foldRight(TypingScheme(delta, List.empty[ErlType[Minus]])) {
+    val TypingScheme(delta, tail) = tree.check_+(env)
+    val v = ErlType.fresh[Plus]
+    TypingScheme[ErlType[Plus]](delta, ErlList(v)).inst(tail, ErlList(ErlVar(v.id)))
+  }
+  def check_-(env: Delta) = {
+    val TypingScheme(delta, tail) = tree.check_-(env)
+    val v = ErlType.fresh[Minus]
+    TypingScheme[ErlType[Minus]](delta, ErlList(v)).inst(ErlList(ErlVar(v.id)), tail)
+  }
+}
+
+case class FunClauseTree(name: Option[String], args: List[ErlTree], guards: List[List[ErlTree]], body: List[ErlTree]) extends ErlTree {
+  def check_+(env: Pi) = {
+    val rec = ErlType.fresh[Plus]
+    val ext = name.map(name => Map(s"$name/${args.size}" -> TypingScheme(Map.empty, rec: ErlType[Plus]))).getOrElse(Map.empty)
+    val TypingScheme(delta, ret) = checkAll(env ++ ext, body).map(_.lastOption.getOrElse(ErlType.Bottom))
+    val result = args.foldRight(TypingScheme(delta, List.empty[ErlType[Minus]])) {
       case (arg, TypingScheme(env, types)) => arg.check_-(env).map(_ :: types)
-    }.map(ErlFunction[Plus](_, ret))
+    }.map(ErlFunction[Plus](_, ret): ErlType[Plus])
+    TypingScheme(result.env, ErlVar(rec.id): ErlType[Plus]).inst(result.typ, ErlVar(rec.id))
   }
   def check_-(env: Delta) = throw new RuntimeException
 }
 
-case class FunTree(name: Option[String], clauses: List[FunClauseTree]) extends ErlTree {
+case class FunTree(clauses: List[FunClauseTree]) extends ErlTree {
   def check_+(env: Pi) = {
     clauses.foldLeft(TypingScheme(Map.empty, ErlType.Bottom)) { (scheme, clause) =>
       for {
@@ -92,7 +124,7 @@ case class FunCallTree(fun: ErlTree, args: List[ErlTree]) extends ErlTree {
       types <- checkAll(env, args)
       f <- fun.check_+(env)
       f <- f match {
-        case ErlAtom(name) => env(name)
+        case ErlAtom(name) => env(s"$name/${args.size}")
         case _ => TypingScheme(Map.empty, f)
       }
     } yield (f, types)

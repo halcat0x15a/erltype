@@ -50,7 +50,7 @@ case class ErlAtom[A <: Polarity](name: String) extends ErlType[A] {
   override def toString = s""""$name""""
 }
 
-case class ErlUnion(types: List[ErlType[Plus]]) extends ErlType[Plus] {
+case class ErlUnion(types: List[ErlType[Plus]]) extends ErlType[Plus] { // TODO
   override def toString = types match {
     case Nil => "bottom"
     case typ :: Nil => typ.toString
@@ -58,7 +58,7 @@ case class ErlUnion(types: List[ErlType[Plus]]) extends ErlType[Plus] {
   }
 }
 
-case class ErlIntersection(types: List[ErlType[Minus]]) extends ErlType[Minus] {
+case class ErlIntersection(types: List[ErlType[Minus]]) extends ErlType[Minus] { // TODO
   override def toString = types match {
     case Nil => "top"
     case typ :: Nil => typ.toString
@@ -107,7 +107,7 @@ object ErlType {
 
   val Bottom: ErlType[Plus] = ErlUnion(Nil)
 
-  private val idGen: AtomicLong = new AtomicLong
+  private val idGen: AtomicLong = new AtomicLong(100)
 
   def fresh[A <: Polarity](implicit A: A): ErlVar[A] = ErlVar(idGen.getAndIncrement)
 

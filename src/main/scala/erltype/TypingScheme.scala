@@ -11,6 +11,7 @@ case class TypingScheme[A](env: Delta, typ: A) {
     }
     TypingScheme(delta, scheme.typ)
   }
+  def flatMapWithEnv[B](f: (Delta, A) => TypingScheme[B]): TypingScheme[B] = flatMap(a => f(env, a))
   override def toString = {
     val delta = env.map { case (k, v) => s"$k: $v" }.mkString(", ")
     s"[$delta]$typ"
@@ -27,4 +28,12 @@ object TypingScheme {
     def simplify: TypingScheme[ErlType[Plus]] = TypingScheme(scheme.env.mapValues(ErlType.simplify(_)), ErlType.simplify(scheme.typ))
   }
 
+  implicit class MinusOp(val scheme: TypingScheme[ErlType[Minus]]) {
+    def inst(x: ErlType[Plus], y: ErlType[Minus]): TypingScheme[ErlType[Minus]] = {
+      val subst = ErlType.biunify(x, y)
+      TypingScheme(scheme.env.mapValues(subst(_)), subst(scheme.typ))
+    }
+  }
 }
+// f(a, b) => subst(f, (a, b) -> ?)
+// [a, b, | c] => subst(c, [?])

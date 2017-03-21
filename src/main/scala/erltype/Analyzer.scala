@@ -8,8 +8,11 @@ class Analyzer extends ErlangBaseListener {
   private var result: Buffer[ErlTree] = Buffer.empty
 
   override def exitFunction(ctx: ErlangParser.FunctionContext): Unit = {
+    println(ctx.getText)
     val clauses = ctx.functionClause.asScala
-    result += FunTree(Some(clauses(0).tokAtom.getText), clauses.map(clause => makeFunClause(clause.clauseArgs.argumentList, clause.clauseBody))(collection.breakOut))
+    val tree = FunTree(clauses.map(clause => makeFunClause(Some(clause.tokAtom.getText), clause.clauseArgs.argumentList, clause.clauseBody))(collection.breakOut))
+    println(tree)
+    result += tree
   }
 
   def fromAtomic(atomic: ErlangParser.AtomicContext): ErlTree =
@@ -24,7 +27,34 @@ class Analyzer extends ErlangBaseListener {
     Option(expr.atomic).map(fromAtomic) orElse
     Option(expr.expr).map(fromExpr) orElse
     Option(expr.funExpr).map(fromFunExpr) orElse
-    Option(expr.list).map(list => ListTree(makeList(list)(_.expr)(_.tail))) getOrElse (throw new RuntimeException)
+    Option(expr.list).map(makeList(_)(_.expr)(_.tail)) getOrElse (throw new RuntimeException)
+
+  def fromExpr100(expr: ErlangParser.Expr150Context): ErlTree = {
+    val exprs = expr.expr160.asScala.map(fromExpr160)
+    makeBinOpCall(exprs, Seq.fill(exprs.size - 1)("orelse"))
+  }
+
+  def fromExpr150(expr: ErlangParser.Expr150Context): ErlTree = {
+    val exprs = expr.expr160.asScala.map(fromExpr160)
+    makeBinOpCall(exprs, Seq.fill(exprs.size - 1)("orelse"))
+  }
+
+  def fromExpr160(expr: ErlangParser.Expr160Context): ErlTree = {
+    val exprs = expr.expr200.asScala.map(fromExpr200)
+    makeBinOpCall(exprs, Seq.fill(exprs.size - 1)("andalso"))
+  }
+
+  def fromExpr200(expr: ErlangParser.Expr200Context): ErlTree = makeBinOpCall(expr.expr300.asScala.map(fromExpr300), Option(expr.compOp).map(_.getText).toList)
+
+  def fromExpr300(expr: ErlangParser.Expr300Context): ErlTree = makeBinOpCall(expr.expr400.asScala.map(fromExpr400), expr.listOp.asScala.map(_.getText))
+
+  def fromExpr400(expr: ErlangParser.Expr400Context): ErlTree = makeBinOpCall(expr.expr500.asScala.map(fromExpr500), expr.addOp.asScala.map(_.getText))
+
+  def fromExpr500(expr: ErlangParser.Expr500Context): ErlTree = makeBinOpCall(expr.expr600.asScala.map(fromExpr600), expr.multOp.asScala.map(_.getText))
+
+  def fromExpr600(expr: ErlangParser.Expr600Context): ErlTree =
+    Option(expr.prefixOp).map(prefixOp => FunCallTree(AtomTree(prefixOp.getText), List(fromExpr700(expr.expr700)))) getOrElse
+    fromExpr700(expr.expr700)
 
   def fromExpr700(expr: ErlangParser.Expr700Context): ErlTree =
     Option(expr.expr800).map(fromExpr800) orElse
@@ -33,32 +63,36 @@ class Analyzer extends ErlangBaseListener {
   def fromExpr800(expr: ErlangParser.Expr800Context): ErlTree = fromExprMax(expr.exprMax.get(0))
 
   def fromExpr(expr: ErlangParser.ExprContext): ErlTree =
-    fromExpr700(expr.expr100.
-      expr150.get(0).
-      expr160.get(0).
-      expr200.get(0).
-      expr300.get(0).
-      expr400.get(0).
-      expr500.get(0).
-      expr600.get(0).
-      expr700)
+    fromExpr150(expr.expr100.expr150.get(0))
 
   def fromFunctionCall(funCall: ErlangParser.FunctionCallContext): ErlTree =
     FunCallTree(fromExpr800(funCall.expr800), Option(funCall.argumentList.exprs).toList.flatMap(_.expr.asScala.map(fromExpr)))
 
   def fromFunExpr(fun: ErlangParser.FunExprContext): ErlTree =
-    Option(fun.funClauses).map(funClauses => FunTree(None, funClauses.funClause.asScala.map(clause => makeFunClause(clause.argumentList, clause.clauseBody))(collection.breakOut))) orElse
+    Option(fun.funClauses).map(funClauses => FunTree(funClauses.funClause.asScala.map(clause => makeFunClause(None, clause.argumentList, clause.clauseBody))(collection.breakOut))) orElse
     Option(fun.tokAtom).map(tokAtom => FunRefTree(tokAtom.getText, fun.tokInteger.getText.toInt)) getOrElse (throw new RuntimeException)
 
-  def makeList[A](a: A)(head: A => ErlangParser.ExprContext)(tail: A => ErlangParser.TailContext): List[ErlTree] =
-    Option(head(a)).map(head => fromExpr(head) :: makeList(tail(a))(_.expr)(_.tail)).getOrElse(Nil)
+  def makeList[A](a: A)(head: A => ErlangParser.ExprContext)(tail: A => ErlangParser.TailContext): ListTree =
+    Option(head(a)).map { head =>
+      Option(tail(a)).map { tail =>
+        ConsTree(fromExpr(head), makeList(tail)(_.expr)(_.tail))
+      }.getOrElse(TailTree(fromExpr(head)))
+    }.getOrElse(NilTree)
 
-  def makeFunClause(args: ErlangParser.ArgumentListContext, body: ErlangParser.ClauseBodyContext): FunClauseTree =
+  def makeFunClause(name: Option[String], args: ErlangParser.ArgumentListContext, body: ErlangParser.ClauseBodyContext): FunClauseTree =
     FunClauseTree(
+      name,
       Option(args.exprs).toList.flatMap(_.expr.asScala.map(fromExpr)),
       Nil, // TODO
       body.exprs.expr.asScala.map(fromExpr)(collection.breakOut)
     )
+
+  def makeBinOpCall(exprs: Seq[ErlTree], ops: Seq[String]): ErlTree = {
+    val head +: tail = exprs
+    tail.zip(ops).foldLeft(head) {
+      case (lhs, (rhs, op)) => FunCallTree(AtomTree(op), List(lhs, rhs))
+    }
+  }
 
   def getResult: Vector[ErlTree] = result.toVector
 
