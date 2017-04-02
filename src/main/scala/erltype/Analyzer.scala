@@ -8,10 +8,8 @@ class Analyzer extends ErlangBaseListener {
   private var result: Buffer[ErlTree] = Buffer.empty
 
   override def exitFunction(ctx: ErlangParser.FunctionContext): Unit = {
-    println(ctx.getText)
     val clauses = ctx.functionClause.asScala
-    val tree = FunTree(clauses.map(clause => makeFunClause(Some(clause.tokAtom.getText), clause.clauseArgs.argumentList, clause.clauseBody))(collection.breakOut))
-    println(tree)
+    val tree = FunTree(Some(clauses(0).tokAtom.getText), clauses.map(clause => makeFunClause(clause.clauseArgs.argumentList, clause.clauseBody))(collection.breakOut))
     result += tree
   }
 
@@ -23,15 +21,15 @@ class Analyzer extends ErlangBaseListener {
     Option(atomic.tokString).map(tokString => StringTree(tokString.asScala.map(_.getText).mkString)) getOrElse (throw new RuntimeException)
 
   def fromExprMax(expr: ErlangParser.ExprMaxContext): ErlTree =
-    Option(expr.tokVar).map(tokVar => VarTree(tokVar.getText)) orElse
+    Option(expr.tokVar).map(tokVar => VarTree(tokVar.getText.hashCode)) orElse
     Option(expr.atomic).map(fromAtomic) orElse
     Option(expr.expr).map(fromExpr) orElse
     Option(expr.funExpr).map(fromFunExpr) orElse
-    Option(expr.list).map(makeList(_)(_.expr)(_.tail)) getOrElse (throw new RuntimeException)
+    Option(expr.list).map(makeList) getOrElse (throw new RuntimeException)
 
-  def fromExpr100(expr: ErlangParser.Expr150Context): ErlTree = {
-    val exprs = expr.expr160.asScala.map(fromExpr160)
-    makeBinOpCall(exprs, Seq.fill(exprs.size - 1)("orelse"))
+  def fromExpr100(expr: ErlangParser.Expr100Context): ErlTree = {
+    val head +: tail = expr.expr150.asScala.map(fromExpr150)
+    tail.foldRight(head)(AssignTree(_, _))
   }
 
   def fromExpr150(expr: ErlangParser.Expr150Context): ErlTree = {
@@ -63,25 +61,35 @@ class Analyzer extends ErlangBaseListener {
   def fromExpr800(expr: ErlangParser.Expr800Context): ErlTree = fromExprMax(expr.exprMax.get(0))
 
   def fromExpr(expr: ErlangParser.ExprContext): ErlTree =
-    fromExpr150(expr.expr100.expr150.get(0))
+    fromExpr100(expr.expr100)
 
   def fromFunctionCall(funCall: ErlangParser.FunctionCallContext): ErlTree =
     FunCallTree(fromExpr800(funCall.expr800), Option(funCall.argumentList.exprs).toList.flatMap(_.expr.asScala.map(fromExpr)))
 
   def fromFunExpr(fun: ErlangParser.FunExprContext): ErlTree =
-    Option(fun.funClauses).map(funClauses => FunTree(funClauses.funClause.asScala.map(clause => makeFunClause(None, clause.argumentList, clause.clauseBody))(collection.breakOut))) orElse
+    Option(fun.funClauses).map(funClauses => FunTree(None, funClauses.funClause.asScala.map(clause => makeFunClause(clause.argumentList, clause.clauseBody))(collection.breakOut))) orElse
     Option(fun.tokAtom).map(tokAtom => FunRefTree(tokAtom.getText, fun.tokInteger.getText.toInt)) getOrElse (throw new RuntimeException)
 
-  def makeList[A](a: A)(head: A => ErlangParser.ExprContext)(tail: A => ErlangParser.TailContext): ListTree =
-    Option(head(a)).map { head =>
-      Option(tail(a)).map { tail =>
-        ConsTree(fromExpr(head), makeList(tail)(_.expr)(_.tail))
-      }.getOrElse(TailTree(fromExpr(head)))
-    }.getOrElse(NilTree)
+  def makeList[A](list: ErlangParser.ListContext): ListTree =
+    Option(list.expr).map { expr =>
+      makeTail(fromExpr(expr), list.tail)
+    }.getOrElse {
+      NilTree
+    }
 
-  def makeFunClause(name: Option[String], args: ErlangParser.ArgumentListContext, body: ErlangParser.ClauseBodyContext): FunClauseTree =
+  def makeTail[A](head: ErlTree, tail: ErlangParser.TailContext): ListTree =
+    Option(tail.expr).map { expr =>
+      Option(tail.tail).map { tail =>
+        ConsTree(head, makeTail(fromExpr(expr), tail))
+      }.getOrElse {
+        ConsTree(head, fromExpr(expr))
+      }
+    }.getOrElse {
+      ConsTree(head, NilTree)
+    }
+
+  def makeFunClause(args: ErlangParser.ArgumentListContext, body: ErlangParser.ClauseBodyContext): FunClauseTree =
     FunClauseTree(
-      name,
       Option(args.exprs).toList.flatMap(_.expr.asScala.map(fromExpr)),
       Nil, // TODO
       body.exprs.expr.asScala.map(fromExpr)(collection.breakOut)

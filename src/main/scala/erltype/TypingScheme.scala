@@ -17,7 +17,7 @@ case class TypingScheme[A](env: Delta, typ: A) {
 object TypingScheme {
 
   def show[A <: Polarity](scheme: TypingScheme[ErlType[A]]): String = {
-    val delta = scheme.env.map { case (k, v) => s"$k: ${v.show}" }.mkString(", ")
+    val delta = scheme.env.map { case (k, v) => s"${VarType(k).show}: ${v.show}" }.mkString(", ")
     s"[$delta]${scheme.typ.show}"
   }
 

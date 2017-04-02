@@ -17,15 +17,14 @@ object Main extends App {
       val env = HashMap.empty[String, TypingScheme[ErlType[Plus]]]
       env("++/2") = TypingScheme(Map.empty, FunctionType(List(ListType(VarType(0)), ListType(VarType(0))), ListType(VarType(0))))
       env("--/2") = TypingScheme(Map.empty, FunctionType(List(ListType(VarType(0)), ListType(VarType(0))), ListType(VarType(0))))
-      for (tree@FunTree(clauses) <- analyzer.getResult) {
+      for (tree@FunTree(Some(name), clauses) <- analyzer.getResult) {
         try {
-          val Some(name) = clauses(0).name
           val arity = clauses(0).args.size
-          val scheme = tree.check_+(env.toMap).simplify
+          val scheme = tree.check_+(env.toMap)
           env(s"$name/$arity") = scheme
-          println(s"$name/$arity:${TypingScheme.show(scheme)}")
+          println(s"$name/$arity:${TypingScheme.show(scheme.simplify)}")
         } catch {
-          case e: Throwable => println(e.getMessage)
+          case e: Throwable => println(e)
         }
       }
     }
