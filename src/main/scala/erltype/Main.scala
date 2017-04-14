@@ -17,6 +17,7 @@ object Main extends App {
       val env = HashMap.empty[String, TypingScheme[ErlType[Plus]]]
       env("++/2") = TypingScheme(Map.empty, FunctionType(List(ListType(VarType(0)), ListType(VarType(0))), ListType(VarType(0))))
       env("--/2") = TypingScheme(Map.empty, FunctionType(List(ListType(VarType(0)), ListType(VarType(0))), ListType(VarType(0))))
+      env("-/2") = TypingScheme(Map.empty, FunctionType(List(IntType(), IntType()), IntType()))
       for (tree@FunTree(Some(name), clauses) <- analyzer.getResult) {
         try {
           val arity = clauses(0).args.size

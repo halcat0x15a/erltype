@@ -47,26 +47,30 @@ case class VarTree(id: Long) extends ErlTree {
   }
 }
 
-sealed abstract class ListTree extends ErlTree
-
-case object NilTree extends ListTree {
-  def check_+(env: Pi) = TypingScheme(Map.empty, ListType(ErlType.Bottom))
-  def check_-(env: Delta) = TypingScheme(env, ListType(ErlType.Top))
+case object NilTree extends ErlTree {
+  def check_+(env: Pi) = TypingScheme(Map.empty, VariantType(Map("nil" -> UnitType)))
+  def check_-(env: Delta) = TypingScheme(env, VariantType(Map("nil" -> UnitType)))
 }
 
-case class ConsTree(head: ErlTree, tail: ErlTree) extends ListTree {
-  def check_+(env: Pi) = for {
-    h <- head.check_+(env)
-    t <- tail.check_+(env)
-  } yield {
-    ListType(h) \/ t
+case class ConsTree(head: ErlTree, tail: ErlTree) extends ErlTree {
+  def check_+(env: Pi) = {
+    val TypingScheme(delta, typ) = for {
+      h <- head.check_+(env)
+      t <- tail.check_+(env)
+    } yield ListType(h) \/ t
+    val ret = ErlType.fresh
+    val scheme = TypingScheme(delta, ListType(VarType(ret)): ErlType[Plus]).inst(typ, ListType(VarType(ret)))
+    scheme
   }
   def check_-(env: Delta) = {
     head.check_-(env) match {
       case TypingScheme(env, h) =>
         tail.check_-(env) match {
           case TypingScheme(env, t) =>
-            TypingScheme(env, ListType(h) /\ t)
+            val ret = ErlType.fresh
+            val scheme = TypingScheme(env, ListType(VarType(ret)): ErlType[Minus]).inst(ListType(VarType(ret)), ListType(h) /\ t)
+            println(h, t, TypingScheme.show(scheme))
+            scheme
         }
     }
   }
@@ -74,7 +78,10 @@ case class ConsTree(head: ErlTree, tail: ErlTree) extends ListTree {
 
 case class FunClauseTree(args: List[ErlTree], guards: List[List[ErlTree]], body: List[ErlTree]) extends ErlTree {
   def check_+(env: Pi) = {
-    val TypingScheme(delta, ret) = checkAll(env, body).map(_.lastOption.getOrElse(ErlType.Bottom))
+    val TypingScheme(delta, ret) = for {
+      bool <- checkAll(env, guards.flatten)
+      exprs <- checkAll(env, body)
+    } yield exprs.lastOption.getOrElse(ErlType.Bottom)
     args.foldRight(TypingScheme(delta, List.empty[ErlType[Minus]])) {
       case (arg, TypingScheme(env, types)) => arg.check_-(env).map(_ :: types)
     }.map(FunctionType[Plus](_, ret): ErlType[Plus])

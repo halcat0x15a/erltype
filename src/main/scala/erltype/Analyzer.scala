@@ -70,14 +70,14 @@ class Analyzer extends ErlangBaseListener {
     Option(fun.funClauses).map(funClauses => FunTree(None, funClauses.funClause.asScala.map(clause => makeFunClause(clause.argumentList, clause.clauseBody))(collection.breakOut))) orElse
     Option(fun.tokAtom).map(tokAtom => FunRefTree(tokAtom.getText, fun.tokInteger.getText.toInt)) getOrElse (throw new RuntimeException)
 
-  def makeList[A](list: ErlangParser.ListContext): ListTree =
+  def makeList[A](list: ErlangParser.ListContext): ErlTree =
     Option(list.expr).map { expr =>
       makeTail(fromExpr(expr), list.tail)
     }.getOrElse {
       NilTree
     }
 
-  def makeTail[A](head: ErlTree, tail: ErlangParser.TailContext): ListTree =
+  def makeTail[A](head: ErlTree, tail: ErlangParser.TailContext): ErlTree =
     Option(tail.expr).map { expr =>
       Option(tail.tail).map { tail =>
         ConsTree(head, makeTail(fromExpr(expr), tail))

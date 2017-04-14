@@ -46,8 +46,16 @@ case class AtomType[A <: Polarity](name: String) extends ErlType[A] {
   def show = s""""$name""""
 }
 
-case class ListType[A <: Polarity](typ: ErlType[A]) extends ErlType[A] {
-  def show = s"[${typ.show}]"
+case class RecursiveType[A <: Polarity](id: Long, typ: ErlType[A]) extends ErlType[A] {
+  def show = s"rec ${VarType(id).show} = ${typ.show}"
+}
+
+case class TupleType[A <: Polarity](types: List[ErlType[A]]) extends ErlType[A] {
+  def show = types.map(_.show).mkString("(", ", ", ")")
+}
+
+case class VariantType[A <: Polarity](types: Map[String, ErlType[A]]) extends ErlType[A] {
+  def show = types.map { case (label, typ) => s"$label: ${typ.show}" }.mkString("[", " | ", "]")
 }
 
 case class UnionType(types: Vector[ErlType[Plus]]) extends ErlType[Plus] {
@@ -114,14 +122,18 @@ object ErlType {
 
   def collect[A <: Polarity](typ: ErlType[A])(implicit A: A): Vector[TypeVar] =
     typ match {
-      case ListType(typ) =>
-        collect(typ)
+      case VariantType(types) =>
+        types.foldLeft(Vector.empty[TypeVar])((vars, kv) => vars ++ collect(kv._2))
       case FunctionType(params, ret) =>
         params.foldLeft(Vector.empty[TypeVar])(_ ++ collect(_)(A.inverse)) ++ collect(ret)
       case UnionType(types) =>
         types.foldLeft(Vector.empty[TypeVar])(_ ++ collect(_))
       case IntersectionType(types) =>
         types.foldLeft(Vector.empty[TypeVar])(_ ++ collect(_))
+      case TupleType(types) =>
+        types.foldLeft(Vector.empty[TypeVar])(_ ++ collect(_))
+      case RecursiveType(_, typ) =>
+        collect(typ)
       case VarType(id) =>
         Vector(TypeVar(id, A))
       case _ =>
@@ -132,8 +144,8 @@ object ErlType {
 
   def bisubst[A <: Polarity](typ: ErlType[A], subst: Map[TypeVar, ErlType[_ <: Polarity]])(implicit A: A): ErlType[A] =
     typ match {
-      case ListType(typ) =>
-        ListType(bisubst(typ, subst))
+      case VariantType(types) =>
+        VariantType(types.map { case (label, typ) => label -> bisubst(typ, subst) })
       case FunctionType(params, ret) =>
         FunctionType(params.map(bisubst(_, subst)(A.inverse)), bisubst(ret, subst))
       case UnionType(types) =>
@@ -142,6 +154,8 @@ object ErlType {
         types.map(bisubst(_, subst)).foldLeft(Top)(_ /\ _)
       case VarType(id) =>
         subst.get(TypeVar(id, A)).fold(typ)(_.asInstanceOf[ErlType[A]])
+      case RecursiveType(id, typ) =>
+        RecursiveType(id, bisubst(typ, subst))
       case _ =>
         typ
     }
@@ -152,15 +166,19 @@ object ErlType {
     (x, y) match {
       case _ if x == y =>
         BiSubsts.identity
-      case (ListType(x), ListType(y)) =>
-        biunify(x, y)
+      case (VariantType(x), VariantType(y)) if x.keySet.subsetOf(y.keySet) =>
+        y.keys.foldLeft(BiSubsts.identity) { (f, l) => f compose biunify(f(x(l)), f(y(l))) }
       case (FunctionType(xs, x), FunctionType(ys, y)) =>
         val f = xs.zip(ys).foldLeft(BiSubsts.identity) { case (f, (x, y)) => f compose biunify(f(y), f(x)) }
         f compose biunify(f(x), f(y))
       case (UnionType(xs), _) =>
-        xs.foldRight(BiSubsts.identity) { (x, f) => f compose biunify(f(x), f(y)) }
+        xs.foldLeft(BiSubsts.identity) { (f, x) => f compose biunify(f(x), f(y)) }
       case (_, IntersectionType(ys)) =>
-        ys.foldRight(BiSubsts.identity) { (y, f) => f compose biunify(f(x), f(y)) }
+        ys.foldLeft(BiSubsts.identity) { (f, y) => f compose biunify(f(x), f(y)) }
+      case (RecursiveType(id, typ), _) =>
+        biunify(bisubst(id, typ, x), y)
+      case (_, RecursiveType(id, typ)) =>
+        biunify(x, bisubst(id, typ, y))
       case (VarType(id), _) =>
         if (isFreeVar(id, y))
           BiSubsts(BiSubst_-(id, y /\ VarType(id)))
@@ -171,8 +189,10 @@ object ErlType {
           BiSubsts(BiSubst_+(id, x \/ VarType(id)))
         else
           BiSubsts(BiSubst_+(id, bisubst(id, x, VarType[Plus](fresh)) \/ VarType(id)))
+      case (TupleType(xs), TupleType(ys)) if xs.size == ys.size =>
+        xs.zip(ys).foldLeft(BiSubsts.identity) { case (f, (x, y)) => f compose biunify(f(x), f(y)) }
       case _ =>
-        throw new RuntimeException(s"$x is not $y")
+        throw new RuntimeException(s"${x.show} is not ${y.show}")
     }
 
   def removeVar[A <: Polarity](typ: ErlType[A])(implicit A: A): ErlType[A] = {
@@ -199,7 +219,8 @@ object ErlType {
         case (UnionType(xs), _) => xs.foldRight(that)(_ \/ _)
         case (_, UnionType(ys)) if ys.contains(self) => UnionType(ys)
         case (_, UnionType(ys)) => UnionType(self +: ys)
-        case (ListType(x), ListType(y)) => ListType(x \/ y)
+        case (VariantType(x), VariantType(y)) =>
+          VariantType((x.keys ++ y.keys).map(l => l -> x.get(l).zip(y.get(l)).map { case (x, y) => x \/ y }.headOption.orElse(x.get(l)).getOrElse(y(l)))(collection.breakOut))
         case (FunctionType(xs, x), FunctionType(ys, y)) => FunctionType(xs.zip(ys).map { case (x, y) => x /\ y }, x \/ y)
         case _ => UnionType(Vector(self, that))
       }
@@ -213,7 +234,7 @@ object ErlType {
         case (IntersectionType(xs), _) => xs.foldRight(that)(_ /\ _)
         case (_, IntersectionType(ys)) if ys.contains(self) => IntersectionType(ys)
         case (_, IntersectionType(ys)) => IntersectionType(self +: ys)
-        case (ListType(x), ListType(y)) => ListType(x /\ y)
+        case (VariantType(x), VariantType(y)) => VariantType((x.keySet & y.keySet).map { l => l -> x(l) /\ y(l) }(collection.breakOut))
         case (FunctionType(xs, x), FunctionType(ys, y)) => FunctionType(xs.zip(ys).map { case (x, y) => x \/ y }, x /\ y)
         case _ => IntersectionType(Vector(self, that))
       }
