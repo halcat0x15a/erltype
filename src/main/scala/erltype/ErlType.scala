@@ -1,99 +1,94 @@
 package erltype
 
-import java.util.concurrent.atomic.AtomicLong
-
 sealed abstract class Polarity {
   type Inverse <: Polarity
   def inverse: Inverse
 }
 
-sealed abstract class Plus extends Polarity {
-  type Inverse = Minus
-  def inverse = Polarity.Minus
+sealed abstract class Pos extends Polarity {
+  type Inverse = Neg
+  def inverse = Neg
 }
 
-sealed abstract class Minus extends Polarity {
-  type Inverse = Plus
-  def inverse = Polarity.Plus
+case object Pos extends Pos
+
+sealed abstract class Neg extends Polarity {
+  type Inverse = Pos
+  def inverse = Pos
 }
+
+case object Neg extends Neg
 
 object Polarity {
-  implicit case object Plus extends Plus
-  implicit case object Minus extends Minus
+  implicit val pos: Pos = Pos
+  implicit val neg: Neg = Neg
 }
 
-sealed abstract class ErlType[A <: Polarity] {
+sealed abstract class Type[A <: Polarity] {
   def show: String
 }
 
-case class IntType[A <: Polarity]() extends ErlType[A] {
+case class IntType[A <: Polarity]() extends Type[A] {
   def show = "integer"
 }
 
-case class FloatType[A <: Polarity]() extends ErlType[A] {
+case class FloatType[A <: Polarity]() extends Type[A] {
   def show = "float"
 }
 
-case class CharType[A <: Polarity]() extends ErlType[A] {
+case class CharType[A <: Polarity]() extends Type[A] {
   def show = "char"
 }
 
-case class StringType[A <: Polarity]() extends ErlType[A] {
+case class StringType[A <: Polarity]() extends Type[A] {
   def show = "string"
 }
 
-case class AtomType[A <: Polarity](name: String) extends ErlType[A] {
+case class AtomType[A <: Polarity](name: String) extends Type[A] {
   def show = s""""$name""""
 }
 
-case class ListType[A <: Polarity](typ: ErlType[A]) extends ErlType[A] {
+case class ListType[A <: Polarity](typ: Type[A]) extends Type[A] {
   def show = s"[${typ.show}]"
 }
 
-case class UnionType(types: Vector[ErlType[Plus]]) extends ErlType[Plus] {
+case class UnionType(types: Vector[Type[Pos]]) extends Type[Pos] {
   def show = if (types.isEmpty) "bottom" else types.map(_.show).mkString(" | ")
 }
 
-case class IntersectionType(types: Vector[ErlType[Minus]]) extends ErlType[Minus] {
+case class IntersectionType(types: Vector[Type[Neg]]) extends Type[Neg] {
   def show = if (types.isEmpty) "top" else types.map(_.show).mkString(" & ")
 }
 
-case class FunctionType[A <: Polarity](params: List[ErlType[A#Inverse]], ret: ErlType[A]) extends ErlType[A] {
+case class FunctionType[A <: Polarity](params: List[Type[A#Inverse]], ret: Type[A]) extends Type[A] {
   def show = {
     val ps = params.map(_.show).mkString("(", ", ", ")")
-    s"($ps -> ${ret.show})"
+    s"$ps -> ${ret.show}"
   }
 }
 
-case class VarType[A <: Polarity](id: Long) extends ErlType[A] {
+case class VarType[A <: Polarity](id: Long) extends Type[A] {
   def show = alphabets(id)
   private[this] def alphabets(n: Long): String = (if (n / 26 > 0) alphabets(n / 26 - 1) else "") + ('A' + n % 26).toChar
 }
 
-case class TypeVar(id: Long, polarity: Polarity)
+case class SubstKey(id: Long, polarity: Polarity)
 
-sealed abstract class BiSubst {
-  def show = {
-    val (id, typ) = this match {
-      case BiSubst_+(id, typ) => (id, typ)
-      case BiSubst_-(id, typ) => (id, typ)
-    }
-    s"${VarType(id).show} = ${typ.show}"
-  }
-}
+sealed abstract class BiSubst
 
-case class BiSubst_+(id: Long, typ: ErlType[Plus]) extends BiSubst
+case class BiSubst_+(id: Long, typ: Type[Pos]) extends BiSubst
 
-case class BiSubst_-(id: Long, typ: ErlType[Minus]) extends BiSubst
+case class BiSubst_-(id: Long, typ: Type[Neg]) extends BiSubst
 
 class BiSubsts(val self: Vector[BiSubst]) extends AnyVal {
-  def apply[A <: Polarity](typ: ErlType[A])(implicit A: A): ErlType[A] =
+  def apply[A <: Polarity](typ: Type[A])(implicit A: A): Type[A] = {
     self.foldLeft(typ) { (typ, bisubst) =>
       bisubst match {
-        case BiSubst_+(id, plus) => ErlType.bisubst(id, typ, plus)
-        case BiSubst_-(id, minus) => ErlType.bisubst(id, typ, minus)
+        case BiSubst_+(id, plus) => Type.bisubst(id, typ, plus)
+        case BiSubst_-(id, minus) => Type.bisubst(id, typ, minus)
       }
     }
+  }
   def compose(that: BiSubsts): BiSubsts = new BiSubsts(self ++ that.self)
 }
 
@@ -102,53 +97,45 @@ object BiSubsts {
   def apply(bisubst: BiSubst): BiSubsts = new BiSubsts(Vector(bisubst))
 }
 
-object ErlType {
+object Type {
 
-  val Top: ErlType[Minus] = IntersectionType(Vector.empty)
-
-  val Bottom: ErlType[Plus] = UnionType(Vector.empty)
-
-  private val idGen: AtomicLong = new AtomicLong(100)
-
-  def fresh: Long = idGen.getAndIncrement
-
-  def collect[A <: Polarity](typ: ErlType[A])(implicit A: A): Vector[TypeVar] =
+  def collect[A <: Polarity](typ: Type[A])(implicit A: A): Vector[SubstKey] =
     typ match {
       case ListType(typ) =>
         collect(typ)
       case FunctionType(params, ret) =>
-        params.foldLeft(Vector.empty[TypeVar])(_ ++ collect(_)(A.inverse)) ++ collect(ret)
+        params.foldLeft(Vector.empty[SubstKey])(_ ++ collect(_)(A.inverse)) ++ collect(ret)
       case UnionType(types) =>
-        types.foldLeft(Vector.empty[TypeVar])(_ ++ collect(_))
+        types.foldLeft(Vector.empty[SubstKey])(_ ++ collect(_))
       case IntersectionType(types) =>
-        types.foldLeft(Vector.empty[TypeVar])(_ ++ collect(_))
+        types.foldLeft(Vector.empty[SubstKey])(_ ++ collect(_))
       case VarType(id) =>
-        Vector(TypeVar(id, A))
+        Vector(SubstKey(id, A))
       case _ =>
         Vector.empty
     }
 
-  def isFreeVar[A <: Polarity](id: Long, typ: ErlType[A])(implicit A: A): Boolean = collect(typ).exists(_.id == id)
+  def isFreeVar[A <: Polarity](id: Long, typ: Type[A])(implicit A: A): Boolean = collect(typ).exists(_.id == id)
 
-  def bisubst[A <: Polarity](typ: ErlType[A], subst: Map[TypeVar, ErlType[_ <: Polarity]])(implicit A: A): ErlType[A] =
+  def bisubst[A <: Polarity](typ: Type[A], subst: Map[SubstKey, Type[_ <: Polarity]])(implicit A: A): Type[A] =
     typ match {
       case ListType(typ) =>
         ListType(bisubst(typ, subst))
       case FunctionType(params, ret) =>
         FunctionType(params.map(bisubst(_, subst)(A.inverse)), bisubst(ret, subst))
       case UnionType(types) =>
-        types.map(bisubst(_, subst)).foldLeft(Bottom)(_ \/ _)
+        types.map(bisubst(_, subst)).foldLeft(BottomType)(_ \/ _)
       case IntersectionType(types) =>
-        types.map(bisubst(_, subst)).foldLeft(Top)(_ /\ _)
+        types.map(bisubst(_, subst)).foldLeft(TopType)(_ /\ _)
       case VarType(id) =>
-        subst.get(TypeVar(id, A)).fold(typ)(_.asInstanceOf[ErlType[A]])
+        subst.get(SubstKey(id, A)).fold(typ)(_.asInstanceOf[Type[A]])
       case _ =>
         typ
     }
 
-  def bisubst[A <: Polarity, B <: Polarity](id: Long, x: ErlType[A], y: ErlType[B])(implicit A: A, B: B): ErlType[A] = bisubst(x, Map(TypeVar(id, B) -> y))
+  def bisubst[A <: Polarity, B <: Polarity](id: Long, x: Type[A], y: Type[B])(implicit A: A, B: B): Type[A] = bisubst(x, Map(SubstKey(id, B) -> y))
 
-  def biunify(x: ErlType[Plus], y: ErlType[Minus]): BiSubsts =
+  def biunify(x: Type[Neg], y: Type[Pos]): BiSubsts =
     (x, y) match {
       case _ if x == y =>
         BiSubsts.identity
@@ -157,45 +144,45 @@ object ErlType {
       case (FunctionType(xs, x), FunctionType(ys, y)) =>
         val f = xs.zip(ys).foldLeft(BiSubsts.identity) { case (f, (x, y)) => f compose biunify(f(y), f(x)) }
         f compose biunify(f(x), f(y))
-      case (UnionType(xs), _) =>
+      case (IntersectionType(xs), _) =>
         xs.foldRight(BiSubsts.identity) { (x, f) => f compose biunify(f(x), f(y)) }
-      case (_, IntersectionType(ys)) =>
+      case (_, UnionType(ys)) =>
         ys.foldRight(BiSubsts.identity) { (y, f) => f compose biunify(f(x), f(y)) }
       case (VarType(id), _) =>
         if (isFreeVar(id, y))
-          BiSubsts(BiSubst_-(id, y /\ VarType(id)))
+          BiSubsts(BiSubst_+(id, y \/ VarType(id)))
         else
-          BiSubsts(BiSubst_-(id, bisubst(id, y, VarType[Minus](fresh)) /\ VarType(id)))
+          BiSubsts(BiSubst_+(id, bisubst(id, y, VarType[Pos](fresh)) \/ VarType(id)))
       case (_, VarType(id)) =>
         if (isFreeVar(id, x))
-          BiSubsts(BiSubst_+(id, x \/ VarType(id)))
+          BiSubsts(BiSubst_-(id, x /\ VarType(id)))
         else
-          BiSubsts(BiSubst_+(id, bisubst(id, x, VarType[Plus](fresh)) \/ VarType(id)))
+          BiSubsts(BiSubst_-(id, bisubst(id, x, VarType[Neg](fresh)) /\ VarType(id)))
       case _ =>
         throw new RuntimeException(s"$x is not $y")
     }
 
-  def removeVar[A <: Polarity](typ: ErlType[A])(implicit A: A): ErlType[A] = {
+  def removeVar[A <: Polarity](typ: Type[A])(implicit A: A): Type[A] = {
     val vars = collect(typ).groupBy(_.polarity).mapValues(_.map(_.id).toSet)
-    val ps = vars.getOrElse(Polarity.Plus, Set.empty)
-    val ms = vars.getOrElse(Polarity.Minus, Set.empty)
+    val ps = vars.getOrElse(Pos, Set.empty)
+    val ms = vars.getOrElse(Neg, Set.empty)
     val free = (ps | ms) -- (ps & ms)
-    bisubst(typ, free.flatMap(id => List(TypeVar(id, Polarity.Plus) -> Bottom, TypeVar(id, Polarity.Minus) -> Top))(collection.breakOut))
+    bisubst(typ, free.flatMap(id => List(SubstKey(id, Pos) -> BottomType, SubstKey(id, Neg) -> TopType))(collection.breakOut))
   }
 
-  def reassignVar[A <: Polarity](typ: ErlType[A])(implicit A: A): ErlType[A] = {
+  def reassignVar[A <: Polarity](typ: Type[A])(implicit A: A): Type[A] = {
     val vars = collect(typ)
     val index = vars.map(_.id).distinct.zipWithIndex.toMap
     bisubst(typ, vars.map { case v => v -> VarType(index(v.id)) }(collection.breakOut))
   }
 
-  def simplify[A <: Polarity](typ: ErlType[A])(implicit A: A): ErlType[A] = reassignVar(removeVar(typ))
+  def simplify[A <: Polarity](typ: Type[A])(implicit A: A): Type[A] = reassignVar(removeVar(typ))
 
-  implicit class PlusOp(val self: ErlType[Plus]) extends AnyVal {
-    def \/(that: ErlType[Plus]): ErlType[Plus] =
+  implicit class PosOp(val self: Type[Pos]) extends AnyVal {
+    def \/(that: Type[Pos]): Type[Pos] =
       (self, that) match {
         case _ if self == that => self
-        case (UnionType(xs), UnionType(ys)) => (xs ++ ys).foldLeft(Bottom)(_ \/ _)
+        case (UnionType(xs), UnionType(ys)) => (xs ++ ys).foldLeft(BottomType)(_ \/ _)
         case (UnionType(xs), _) => xs.foldRight(that)(_ \/ _)
         case (_, UnionType(ys)) if ys.contains(self) => UnionType(ys)
         case (_, UnionType(ys)) => UnionType(self +: ys)
@@ -205,11 +192,11 @@ object ErlType {
       }
   }
 
-  implicit class MinusOp(val self: ErlType[Minus]) extends AnyVal {
-    def /\(that: ErlType[Minus]): ErlType[Minus] =
+  implicit class NegOp(val self: Type[Neg]) extends AnyVal {
+    def /\(that: Type[Neg]): Type[Neg] =
       (self, that) match {
         case _ if self == that => self
-        case (IntersectionType(xs), IntersectionType(ys)) => (xs ++ ys).foldLeft(Top)(_ /\ _)
+        case (IntersectionType(xs), IntersectionType(ys)) => (xs ++ ys).foldLeft(TopType)(_ /\ _)
         case (IntersectionType(xs), _) => xs.foldRight(that)(_ /\ _)
         case (_, IntersectionType(ys)) if ys.contains(self) => IntersectionType(ys)
         case (_, IntersectionType(ys)) => IntersectionType(self +: ys)

@@ -1,9 +1,9 @@
 package erltype
 
-import scala.collection.JavaConverters._
-
 case class TypingScheme[A](env: Delta, typ: A) {
-  def map[B](f: A => B): TypingScheme[B] = flatMap(a => TypingScheme(Map.empty, f(a)))
+
+  def map[B](f: A => B): TypingScheme[B] = TypingScheme(env, f(typ))
+
   def flatMap[B](f: A => TypingScheme[B]): TypingScheme[B] = {
     val scheme = f(typ)
     val delta = env.foldLeft(scheme.env) {
@@ -11,28 +11,23 @@ case class TypingScheme[A](env: Delta, typ: A) {
     }
     TypingScheme(delta, scheme.typ)
   }
-  def flatMapWithEnv[B](f: (Delta, A) => TypingScheme[B]): TypingScheme[B] = flatMap(a => f(env, a))
+
 }
 
 object TypingScheme {
 
-  def show[A <: Polarity](scheme: TypingScheme[ErlType[A]]): String = {
-    val delta = scheme.env.map { case (k, v) => s"${VarType(k).show}: ${v.show}" }.mkString(", ")
-    s"[$delta]${scheme.typ.show}"
-  }
-
-  implicit class PlusOp(val scheme: TypingScheme[ErlType[Plus]]) {
-    def inst(x: ErlType[Plus], y: ErlType[Minus]): TypingScheme[ErlType[Plus]] = {
-      val subst = ErlType.biunify(x, y)
+  implicit class TypeOp[A <: Polarity](val scheme: TypingScheme[Type[A]]) {
+    def inst(x: Type[Neg], y: Type[Pos])(implicit A: A): TypingScheme[Type[A]] = {
+      val subst = Type.biunify(x, y)
       TypingScheme(scheme.env.mapValues(subst(_)), subst(scheme.typ))
     }
-    def simplify: TypingScheme[ErlType[Plus]] = TypingScheme(scheme.env.mapValues(ErlType.simplify(_)), ErlType.simplify(scheme.typ))
-  }
-
-  implicit class MinusOp(val scheme: TypingScheme[ErlType[Minus]]) {
-    def inst(x: ErlType[Plus], y: ErlType[Minus]): TypingScheme[ErlType[Minus]] = {
-      val subst = ErlType.biunify(x, y)
-      TypingScheme(scheme.env.mapValues(subst(_)), subst(scheme.typ))
+    def simplify(implicit A: A): TypingScheme[Type[A]] = {
+      TypingScheme(scheme.env.mapValues(Type.simplify(_)), Type.simplify(scheme.typ))
+    }
+    def show: String = {
+      val delta = scheme.env.map { case (k, v) => s"${VarType(k).show}: ${v.show}" }.mkString(", ")
+      s"[$delta]${scheme.typ.show}"
     }
   }
+
 }
