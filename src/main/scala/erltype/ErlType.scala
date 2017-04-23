@@ -52,6 +52,10 @@ case class ListType[A <: Polarity](typ: Type[A]) extends Type[A] {
   def show = s"[${typ.show}]"
 }
 
+case class TupleType[A <: Polarity](types: List[Type[A]]) extends Type[A] {
+  def show = s"{${types.map(_.show).mkString}}"
+}
+
 case class UnionType(types: Vector[Type[Pos]]) extends Type[Pos] {
   def show = if (types.isEmpty) "bottom" else types.map(_.show).mkString(" | ")
 }
@@ -103,6 +107,8 @@ object Type {
     typ match {
       case ListType(typ) =>
         collect(typ)
+      case TupleType(types) =>
+        types.foldLeft(Vector.empty[SubstKey])(_ ++ collect(_))
       case FunctionType(params, ret) =>
         params.foldLeft(Vector.empty[SubstKey])(_ ++ collect(_)(A.inverse)) ++ collect(ret)
       case UnionType(types) =>
@@ -121,6 +127,8 @@ object Type {
     typ match {
       case ListType(typ) =>
         ListType(bisubst(typ, subst))
+      case TupleType(types) =>
+        TupleType(types.map(bisubst(_, subst)))
       case FunctionType(params, ret) =>
         FunctionType(params.map(bisubst(_, subst)(A.inverse)), bisubst(ret, subst))
       case UnionType(types) =>
@@ -135,29 +143,31 @@ object Type {
 
   def bisubst[A <: Polarity, B <: Polarity](id: Long, x: Type[A], y: Type[B])(implicit A: A, B: B): Type[A] = bisubst(x, Map(SubstKey(id, B) -> y))
 
-  def biunify(x: Type[Neg], y: Type[Pos]): BiSubsts =
+  def biunify(x: Type[Pos], y: Type[Neg]): BiSubsts =
     (x, y) match {
       case _ if x == y =>
         BiSubsts.identity
       case (ListType(x), ListType(y)) =>
         biunify(x, y)
+      case (TupleType(xs), TupleType(ys)) =>
+        xs.zip(ys).foldLeft(BiSubsts.identity) { case (f, (x, y)) => f compose biunify(f(x), f(y)) }
       case (FunctionType(xs, x), FunctionType(ys, y)) =>
         val f = xs.zip(ys).foldLeft(BiSubsts.identity) { case (f, (x, y)) => f compose biunify(f(y), f(x)) }
         f compose biunify(f(x), f(y))
-      case (IntersectionType(xs), _) =>
+      case (UnionType(xs), _) =>
         xs.foldRight(BiSubsts.identity) { (x, f) => f compose biunify(f(x), f(y)) }
-      case (_, UnionType(ys)) =>
+      case (_, IntersectionType(ys)) =>
         ys.foldRight(BiSubsts.identity) { (y, f) => f compose biunify(f(x), f(y)) }
       case (VarType(id), _) =>
         if (isFreeVar(id, y))
-          BiSubsts(BiSubst_+(id, y \/ VarType(id)))
+          BiSubsts(BiSubst_-(id, y /\ VarType(id)))
         else
-          BiSubsts(BiSubst_+(id, bisubst(id, y, VarType[Pos](fresh)) \/ VarType(id)))
+          BiSubsts(BiSubst_-(id, bisubst(id, y, VarType[Pos](fresh)) /\ VarType(id)))
       case (_, VarType(id)) =>
         if (isFreeVar(id, x))
-          BiSubsts(BiSubst_-(id, x /\ VarType(id)))
+          BiSubsts(BiSubst_+(id, x \/ VarType(id)))
         else
-          BiSubsts(BiSubst_-(id, bisubst(id, x, VarType[Neg](fresh)) /\ VarType(id)))
+          BiSubsts(BiSubst_+(id, bisubst(id, x, VarType[Neg](fresh)) \/ VarType(id)))
       case _ =>
         throw new RuntimeException(s"$x is not $y")
     }

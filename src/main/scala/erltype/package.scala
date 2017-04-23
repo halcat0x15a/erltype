@@ -10,6 +10,8 @@ package object erltype {
 
   val BottomType: Type[Pos] = UnionType(Vector.empty)
 
+  def BooleanType[A <: Polarity]: Type[A] = AtomType("true")
+
   private val idGen: AtomicLong = new AtomicLong(0)
 
   def fresh: Long = idGen.getAndIncrement

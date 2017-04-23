@@ -24,6 +24,8 @@ object Main extends App {
         TypingScheme(Map.empty, FunctionType(List(ListType(VarType(a)), ListType(VarType(a))), ListType(VarType(a))))
       }
       env("-/2") = TypingScheme(Map.empty, FunctionType(List(IntType(), IntType()), IntType()))
+      env(">/2") = TypingScheme(Map.empty, FunctionType(List(IntType(), IntType()), BooleanType))
+      env("is_list/1") = TypingScheme(Map.empty, FunctionType[Pos](List(TopType), BooleanType))
       for (tree@FunTree(Some(name), clauses) <- analyzer.getResult) {
         try {
           val arity = clauses(0).args.size

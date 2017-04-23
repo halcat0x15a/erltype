@@ -2,62 +2,66 @@ package erltype
 
 sealed abstract class Tree {
   def check_+(env: Pi): TypingScheme[Type[Pos]]
-  def check_-(env: Delta): TypingScheme[Type[Neg]]
+  def check_- : SchemeState[Type[Neg]]
 }
 
 case class IntTree(value: Int) extends Tree {
   def check_+(env: Pi) = TypingScheme(Map.empty, IntType())
-  def check_-(env: Delta) = TypingScheme(env, IntType())
+  def check_- = SchemeState(IntType())
 }
 
 case class FloatTree(value: Float) extends Tree {
   def check_+(env: Pi) = TypingScheme(Map.empty, FloatType())
-  def check_-(env: Delta) = TypingScheme(env, FloatType())
+  def check_- = SchemeState(FloatType())
 }
 
 case class CharTree(value: Char) extends Tree {
   def check_+(env: Pi) = TypingScheme(Map.empty, CharType())
-  def check_-(env: Delta) = TypingScheme(env, CharType())
+  def check_- = SchemeState(CharType())
 }
 
 case class AtomTree(value: String) extends Tree {
   def check_+(env: Pi) = TypingScheme(Map.empty, AtomType(value))
-  def check_-(env: Delta) = TypingScheme(env, AtomType(value))
+  def check_- = SchemeState(AtomType(value))
 }
 
 case class StringTree(value: String) extends Tree {
   def check_+(env: Pi) = TypingScheme(Map.empty, StringType())
-  def check_-(env: Delta) = TypingScheme(env, StringType())
+  def check_- = SchemeState(StringType())
 }
 
 case class VarTree(id: Long) extends Tree {
   def check_+(env: Pi) = TypingScheme(Map(id -> VarType(id)), VarType(id))
-  def check_-(env: Delta) = TypingScheme(env - id, env.getOrElse(id, TopType))
+  def check_- = new SchemeState[Type[Neg]] {
+    def apply(env: Delta) = TypingScheme(env - id, env.getOrElse(id, TopType))
+  }
 }
 
 case class ListTree(exprs: List[Tree], tail: Option[Tree]) extends Tree {
   def check_+(env: Pi) = {
     for {
-      h <- Tree.checkAll_+(env, exprs)
-      t <- tail.fold(TypingScheme(Map.empty, BottomType))(_.check_+(env))
-    } yield ListType(h.foldLeft(BottomType)(_ \/ _)) \/ t
+      types <- Tree.checkAll_+(env, exprs)
+      tail <- tail.fold(TypingScheme(Map.empty, BottomType))(_.check_+(env))
+    } yield ListType(types.foldLeft(BottomType)(_ \/ _)) \/ tail
   }
-  def check_-(env: Delta) = {
-    Tree.checkAll_-(env, exprs) match {
-      case TypingScheme(delta, types) =>
-        tail.fold(TypingScheme(delta, TopType))(_.check_-(delta)).map(ListType(types.foldLeft(TopType)(_ /\ _)) /\ _)
-    }
+  def check_- = {
+    for {
+      types <- Tree.checkAll_-(exprs)
+      tail <- tail.fold(SchemeState(TopType))(_.check_-)
+    } yield ListType(types.foldLeft(TopType)(_ /\ _)) /\ tail
   }
 }
 
 case class FunClauseTree(args: List[Tree], guards: List[List[Tree]], body: List[Tree]) extends Tree {
   def check_+(env: Pi) = {
-    val TypingScheme(delta, ret) = Tree.checkAll_+(env, body).map(_.lastOption.getOrElse(BottomType))
-    args.foldRight(TypingScheme(delta, List.empty[Type[Neg]])) {
-      case (arg, TypingScheme(env, types)) => arg.check_-(env).map(_ :: types)
-    }.map(FunctionType[Pos](_, ret): Type[Pos])
+    val TypingScheme(delta, ret) = for {
+      guards <- Tree.checkAll_+(env, guards.flatten)
+      _ <- TypingScheme(Map.empty, BooleanType[Pos]).inst(TupleType(guards), TupleType(List.fill(guards.size)(BooleanType[Neg])))
+      types <- Tree.checkAll_+(env, body)
+    } yield types.lastOption.getOrElse(BottomType)
+    Tree.checkAll_-(args)(delta).map(FunctionType[Pos](_, ret))
   }
-  def check_-(env: Delta) = throw new RuntimeException
+  def check_- = throw new RuntimeException
 }
 
 case class FunTree(name: Option[String], clauses: List[FunClauseTree]) extends Tree {
@@ -71,16 +75,16 @@ case class FunTree(name: Option[String], clauses: List[FunClauseTree]) extends T
     clauses.foldLeft((ext, TypingScheme(Map.empty, rec: Type[Pos]))) {
       case ((env, _), clause) =>
         val TypingScheme(delta, typ) = clause.check_+(env)
-        val scheme = TypingScheme(delta, rec: Type[Pos]).inst(inv, typ)
+        val scheme = TypingScheme(delta, rec: Type[Pos]).inst(typ, inv)
         (name.fold(env)(name => env.updated(s"$name/$arity", scheme)), scheme)
     }._2
   }
-  def check_-(env: Delta) = throw new RuntimeException
+  def check_- = throw new RuntimeException
 }
 
 case class FunRefTree(name: String, arity: Int) extends Tree {
   def check_+(env: Pi) = env(s"$name/$arity")
-  def check_-(env: Delta) = throw new RuntimeException
+  def check_- = throw new RuntimeException
 }
 
 case class FunCallTree(fun: Tree, args: List[Tree]) extends Tree {
@@ -88,33 +92,25 @@ case class FunCallTree(fun: Tree, args: List[Tree]) extends Tree {
     val TypingScheme(delta, (f, types)) = for {
       types <- Tree.checkAll_+(env, args)
       f <- fun.check_+(env)
-      f <- f match {
-        case AtomType(name) => env(s"$name/${args.size}")
-        case _ => TypingScheme(Map.empty, f)
-      }
     } yield (f, types)
     val v = fresh
-    TypingScheme[Type[Pos]](delta, VarType(v)).inst(FunctionType[Neg](types, VarType(v)), f)
+    TypingScheme[Type[Pos]](delta, VarType(v)).inst(f, FunctionType[Neg](types, VarType(v)))
   }
-  def check_-(env: Delta) = throw new RuntimeException
+  def check_- = throw new RuntimeException
 }
 
 case class AssignTree(lhs: Tree, rhs: Tree) extends Tree {
   def check_+(env: Pi) = {
-    val TypingScheme(delta, (l, r)) = for {
-      r <- rhs.check_+(env)
-      l <- lhs.check_+(env)
-    } yield (l, r)
-    TypingScheme(delta, l).inst(lhs.check_-(delta).typ, r)
+    val TypingScheme(delta, (r, l)) = rhs.check_+(env).zip(lhs.check_-)
+    TypingScheme(delta, r).inst(r, l)
   }
-  def check_-(env: Delta) = {
-    rhs.check_-(env) match {
-      case TypingScheme(delta, r) =>
-        lhs.check_-(delta) match {
-          case TypingScheme(delta, l) =>
-            TypingScheme(delta, l).inst(r, lhs.check_+(Map.empty).typ)
-        }
-    }
+  def check_- = {
+    for {
+      r <- rhs.check_-
+      typ <- new SchemeState[Type[Neg]] {
+        def apply(env: Delta) = lhs.check_+(Map.empty).flatMap(l => TypingScheme(env, r).inst(l, r)) // TODO
+      }
+    } yield typ
   }
 }
 
@@ -129,9 +125,12 @@ object Tree {
     }
   }
 
-  def checkAll_-(env: Delta, tree: Seq[Tree]): TypingScheme[List[Type[Neg]]] = {
-    tree.foldRight(TypingScheme(env, List.empty[Type[Neg]])) {
-      case (expr, TypingScheme(env, types)) => expr.check_-(env).map(_ :: types)
+  def checkAll_-(tree: Seq[Tree]): SchemeState[List[Type[Neg]]] = {
+    tree.foldRight(SchemeState(List.empty[Type[Neg]])) { (expr, state) =>
+      for {
+        types <- state
+        typ <- expr.check_-
+      } yield typ :: types
     }
   }
 
