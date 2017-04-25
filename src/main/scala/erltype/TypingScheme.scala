@@ -15,6 +15,7 @@ case class TypingScheme[A](env: Delta, typ: A) {
 
   def zip[B](state: SchemeState[B]): TypingScheme[(A, B)] =
     state(env).map((typ, _))
+
 }
 
 object TypingScheme {
