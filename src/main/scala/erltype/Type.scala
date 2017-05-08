@@ -1,6 +1,6 @@
 package erltype
 
-sealed abstract class Polarity {
+sealed abstract class Polarity extends Product with Serializable {
   type Inverse <: Polarity
   def inverse: Inverse
 }
@@ -24,7 +24,7 @@ object Polarity {
   implicit val neg: Neg = Neg
 }
 
-sealed abstract class Type[A <: Polarity] {
+sealed abstract class Type[A <: Polarity] extends Product with Serializable {
   def show: String
 }
 
@@ -65,10 +65,7 @@ case class IntersectionType(types: Vector[Type[Neg]]) extends Type[Neg] {
 }
 
 case class FunctionType[A <: Polarity](params: List[Type[A#Inverse]], ret: Type[A]) extends Type[A] {
-  def show = {
-    val ps = params.map(_.show).mkString("(", ", ", ")")
-    s"$ps -> ${ret.show}"
-  }
+  def show = s"""(${params.map(_.show).mkString(", ")}) -> ${ret.show}"""
 }
 
 case class VarType[A <: Polarity](id: Long) extends Type[A] {
@@ -103,6 +100,10 @@ object BiSubsts {
 
 object Type {
 
+  def sum(types: Seq[Type[Pos]]): Type[Pos] = types.foldLeft(BottomType)(_ \/ _)
+
+  def prod(types: Seq[Type[Neg]]): Type[Neg] = types.foldLeft(TopType)(_ /\ _)
+
   def collect[A <: Polarity](typ: Type[A])(implicit A: A): Vector[SubstKey] =
     typ match {
       case ListType(typ) =>
@@ -132,9 +133,9 @@ object Type {
       case FunctionType(params, ret) =>
         FunctionType(params.map(bisubst(_, subst)(A.inverse)), bisubst(ret, subst))
       case UnionType(types) =>
-        types.map(bisubst(_, subst)).foldLeft(BottomType)(_ \/ _)
+        sum(types.map(bisubst(_, subst)))
       case IntersectionType(types) =>
-        types.map(bisubst(_, subst)).foldLeft(TopType)(_ /\ _)
+        prod(types.map(bisubst(_, subst)))
       case VarType(id) =>
         subst.get(SubstKey(id, A)).fold(typ)(_.asInstanceOf[Type[A]])
       case _ =>
@@ -192,10 +193,21 @@ object Type {
     def \/(that: Type[Pos]): Type[Pos] =
       (self, that) match {
         case _ if self == that => self
-        case (UnionType(xs), UnionType(ys)) => (xs ++ ys).foldLeft(BottomType)(_ \/ _)
-        case (UnionType(xs), _) => xs.foldRight(that)(_ \/ _)
-        case (_, UnionType(ys)) if ys.contains(self) => UnionType(ys)
-        case (_, UnionType(ys)) => UnionType(self +: ys)
+        case (UnionType(xs), UnionType(ys)) => sum(xs ++ ys)
+        case (UnionType(xs), _) =>
+          UnionType(xs.foldRight(Vector(that)) { (x, types) =>
+            x \/ that match {
+              case UnionType(_) => x +: types
+              case xy => xy +: types.init
+            }
+          })
+        case (_, UnionType(ys)) =>
+          UnionType(ys.foldLeft(Vector(self)) { (types, y) =>
+            self \/ y match {
+              case UnionType(_) => types :+ y
+              case xy => types.tail :+ xy
+            }
+          })
         case (ListType(x), ListType(y)) => ListType(x \/ y)
         case (FunctionType(xs, x), FunctionType(ys, y)) => FunctionType(xs.zip(ys).map { case (x, y) => x /\ y }, x \/ y)
         case _ => UnionType(Vector(self, that))
@@ -206,10 +218,21 @@ object Type {
     def /\(that: Type[Neg]): Type[Neg] =
       (self, that) match {
         case _ if self == that => self
-        case (IntersectionType(xs), IntersectionType(ys)) => (xs ++ ys).foldLeft(TopType)(_ /\ _)
-        case (IntersectionType(xs), _) => xs.foldRight(that)(_ /\ _)
-        case (_, IntersectionType(ys)) if ys.contains(self) => IntersectionType(ys)
-        case (_, IntersectionType(ys)) => IntersectionType(self +: ys)
+        case (IntersectionType(xs), IntersectionType(ys)) => prod(xs ++ ys)
+        case (IntersectionType(xs), _) =>
+          IntersectionType(xs.foldRight(Vector(that)) { (x, types) =>
+            x /\ that match {
+              case IntersectionType(_) => x +: types
+              case xy => xy +: types.init
+            }
+          })
+        case (_, IntersectionType(ys)) =>
+          IntersectionType(ys.foldLeft(Vector(self)) { (types, y) =>
+            self /\ y match {
+              case IntersectionType(_) => types :+ y
+              case xy => types.tail :+ xy
+            }
+          })
         case (ListType(x), ListType(y)) => ListType(x /\ y)
         case (FunctionType(xs, x), FunctionType(ys, y)) => FunctionType(xs.zip(ys).map { case (x, y) => x \/ y }, x /\ y)
         case _ => IntersectionType(Vector(self, that))
