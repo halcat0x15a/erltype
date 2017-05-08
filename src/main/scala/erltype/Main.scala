@@ -17,23 +17,25 @@ object Main extends App {
       val env = HashMap.empty[String, TypingScheme[Type[Pos]]]
       env("++/2") = {
         val a = fresh
-        TypingScheme(Map.empty, FunctionType(List(ListType(VarType(a)), ListType(VarType(a))), ListType(VarType(a))))
+        TypingScheme(Map.empty, FunType(Vector(ListType(VarType(a)), ListType(VarType(a))), ListType(VarType(a))))
       }
       env("--/2") = {
         val a = fresh
-        TypingScheme(Map.empty, FunctionType(List(ListType(VarType(a)), ListType(VarType(a))), ListType(VarType(a))))
+        TypingScheme(Map.empty, FunType(Vector(ListType(VarType(a)), ListType(VarType(a))), ListType(VarType(a))))
       }
-      env("-/2") = TypingScheme(Map.empty, FunctionType(List(IntType(), IntType()), IntType()))
-      env(">/2") = TypingScheme(Map.empty, FunctionType(List(IntType(), IntType()), BooleanType))
-      env("is_list/1") = TypingScheme(Map.empty, FunctionType[Pos](List(TopType), BooleanType))
+      env("-/2") = TypingScheme(Map.empty, FunType(Vector(IntType(), IntType()), IntType()))
+      env(">/2") = TypingScheme(Map.empty, FunType(Vector(IntType(), IntType()), BooleanType))
+      env("is_list/1") = TypingScheme(Map.empty, FunType[Pos](Vector(TopType), BooleanType))
       for (tree@FunTree(Some(name), clauses) <- analyzer.getResult) {
         try {
           val arity = clauses(0).args.size
           val scheme = tree.check_+(env.toMap)
-          env(s"$name/$arity") = scheme
-          println(s"$name/$arity:${scheme.simplify.show}")
+          env(s"$name/$arity") = scheme.simplify
+          println(s"$name/$arity:${scheme.pretty.show}")
         } catch {
-          case e: Throwable => println(e)
+          case e: Throwable =>
+            //println(e)
+            e.printStackTrace
         }
       }
     }

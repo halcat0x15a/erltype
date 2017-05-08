@@ -6,9 +6,9 @@ package object erltype {
 
   type Pi = Map[String, TypingScheme[Type[Pos]]]
 
-  val TopType: Type[Neg] = IntersectionType(Vector.empty)
+  def TopType[A <: Polarity]: Type[A] = IntersectionType(Vector.empty)
 
-  val BottomType: Type[Pos] = UnionType(Vector.empty)
+  def BottomType[A <: Polarity]: Type[A] = UnionType(Vector.empty)
 
   def BooleanType[A <: Polarity]: Type[A] = AtomType("true")
 

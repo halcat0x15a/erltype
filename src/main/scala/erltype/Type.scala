@@ -1,6 +1,6 @@
 package erltype
 
-sealed abstract class Polarity {
+sealed abstract class Polarity extends Product with Serializable {
   type Inverse <: Polarity
   def inverse: Inverse
 }
@@ -24,8 +24,86 @@ object Polarity {
   implicit val neg: Neg = Neg
 }
 
-sealed abstract class Type[A <: Polarity] {
+sealed abstract class Type[A <: Polarity] extends Product with Serializable {
+
   def show: String
+
+  def inverse: Type[A#Inverse] = this.asInstanceOf[Type[A#Inverse]]
+
+  def \/(that: Type[A]): Type[A] = (this, that) match {
+    case _ if this == that => this
+    case (ListType(x), ListType(y)) => ListType(x \/ y)
+    case (TupleType(xs), TupleType(ys)) => TupleType(xs.zip(ys).map { case (x, y) => x \/ y })
+    case (FunType(xs, x), FunType(ys, y)) => FunType(xs.zip(ys).map { case (x, y) => x /\ y }, x \/ y)
+    case (UnionType(_), UnionType(ys)) => ys.foldLeft(this)(_ \/ _)
+    case (UnionType(xs), _) =>
+      val (types, merged) = xs.foldLeft((Vector.empty[Type[A]], false)) {
+        case ((types, merged), x) => x \/ that match {
+          case UnionType(_) => (types :+ x, merged)
+          case xy => (types :+ xy, true)
+        }
+      }
+      UnionType(if (merged) types else types :+ that)
+    case (_, UnionType(ys)) =>
+      val (types, merged) = ys.foldLeft((Vector.empty[Type[A]], false)) {
+        case ((types, merged), y) => this \/ y match {
+          case UnionType(_) => (types :+ y, merged)
+          case xy => (types :+ xy, true)
+        }
+      }
+      UnionType(if (merged) types else this +: types)
+    case (IntersectionType(xs), IntersectionType(ys)) if xs.toSet.subsetOf(ys.toSet) => this
+    case (IntersectionType(xs), IntersectionType(ys)) if ys.toSet.subsetOf(xs.toSet) => that
+    case (_, IntersectionType(ys)) if ys.contains(this) => this
+    case (IntersectionType(xs), _) if xs.contains(that) => that
+    case _ => UnionType(Vector(this, that))
+  }
+
+  def /\(that: Type[A]): Type[A] = (this, that) match {
+    case _ if this == that => this
+    case (ListType(x), ListType(y)) => ListType(x /\ y)
+    case (TupleType(xs), TupleType(ys)) => TupleType(xs.zip(ys).map { case (x, y) => x /\ y })
+    case (FunType(xs, x), FunType(ys, y)) => FunType(xs.zip(ys).map { case (x, y) => x \/ y }, x /\ y)
+    case (UnionType(xs), UnionType(ys)) => (for {
+      y <- ys
+      x <- xs
+    } yield x /\ y).foldLeft(BottomType[A])(_ \/ _)
+    case (UnionType(xs), _) =>
+      val (types, merged) = xs.foldLeft((Vector.empty[Type[A]], false)) {
+        case ((types, merged), x) => x /\ that match {
+          case UnionType(_) => (types :+ x, merged)
+          case xy => (types :+ xy, true)
+        }
+      }
+      UnionType(if (merged) types else types :+ that)
+    case (_, UnionType(ys)) =>
+      val (types, merged) = ys.foldLeft((Vector.empty[Type[A]], false)) {
+        case ((types, merged), y) => this /\ y match {
+          case UnionType(_) => (types :+ y, merged)
+          case xy => (types :+ xy, true)
+        }
+      }
+      UnionType(if (merged) types else this +: types)
+    case (IntersectionType(_), IntersectionType(ys)) => ys.foldLeft(this)(_ /\ _)
+    case (IntersectionType(xs), _) =>
+      val (types, merged) = xs.foldLeft((Vector.empty[Type[A]], false)) {
+        case ((types, merged), x) => x /\ that match {
+          case IntersectionType(_) => (types :+ x, merged)
+          case xy => (types :+ xy, true)
+        }
+      }
+      IntersectionType(if (merged) types else types :+ that)
+    case (_, IntersectionType(ys)) =>
+      val (types, merged) = ys.foldLeft((Vector.empty[Type[A]], false)) {
+        case ((types, merged), y) => this /\ y match {
+          case IntersectionType(_) => (types :+ y, merged)
+          case xy => (types :+ xy, true)
+        }
+      }
+      IntersectionType(if (merged) types else this +: types)
+    case _ => IntersectionType(Vector(this, that))
+  }
+
 }
 
 case class IntType[A <: Polarity]() extends Type[A] {
@@ -52,23 +130,23 @@ case class ListType[A <: Polarity](typ: Type[A]) extends Type[A] {
   def show = s"[${typ.show}]"
 }
 
-case class TupleType[A <: Polarity](types: List[Type[A]]) extends Type[A] {
+case class TupleType[A <: Polarity](types: Vector[Type[A]]) extends Type[A] {
   def show = s"{${types.map(_.show).mkString}}"
 }
 
-case class UnionType(types: Vector[Type[Pos]]) extends Type[Pos] {
-  def show = if (types.isEmpty) "bottom" else types.map(_.show).mkString(" | ")
-}
-
-case class IntersectionType(types: Vector[Type[Neg]]) extends Type[Neg] {
-  def show = if (types.isEmpty) "top" else types.map(_.show).mkString(" & ")
-}
-
-case class FunctionType[A <: Polarity](params: List[Type[A#Inverse]], ret: Type[A]) extends Type[A] {
+case class FunType[A <: Polarity](params: Vector[Type[A#Inverse]], ret: Type[A]) extends Type[A] {
   def show = {
     val ps = params.map(_.show).mkString("(", ", ", ")")
     s"$ps -> ${ret.show}"
   }
+}
+
+case class UnionType[A <: Polarity](types: Vector[Type[A]]) extends Type[A] {
+  def show = if (types.isEmpty) "bottom" else types.map(_.show).mkString(" | ")
+}
+
+case class IntersectionType[A <: Polarity](types: Vector[Type[A]]) extends Type[A] {
+  def show = if (types.isEmpty) "top" else types.map(_.show).mkString(" & ")
 }
 
 case class VarType[A <: Polarity](id: Long) extends Type[A] {
@@ -103,13 +181,15 @@ object BiSubsts {
 
 object Type {
 
+  def inverseAll[F[_], A <: Polarity](types: F[Type[A]]): F[Type[A#Inverse]] = types.asInstanceOf[F[Type[A#Inverse]]]
+
   def collect[A <: Polarity](typ: Type[A])(implicit A: A): Vector[SubstKey] =
     typ match {
       case ListType(typ) =>
         collect(typ)
       case TupleType(types) =>
         types.foldLeft(Vector.empty[SubstKey])(_ ++ collect(_))
-      case FunctionType(params, ret) =>
+      case FunType(params, ret) =>
         params.foldLeft(Vector.empty[SubstKey])(_ ++ collect(_)(A.inverse)) ++ collect(ret)
       case UnionType(types) =>
         types.foldLeft(Vector.empty[SubstKey])(_ ++ collect(_))
@@ -129,14 +209,14 @@ object Type {
         ListType(bisubst(typ, subst))
       case TupleType(types) =>
         TupleType(types.map(bisubst(_, subst)))
-      case FunctionType(params, ret) =>
-        FunctionType(params.map(bisubst(_, subst)(A.inverse)), bisubst(ret, subst))
+      case FunType(params, ret) =>
+        FunType(params.map(bisubst(_, subst)(A.inverse)), bisubst(ret, subst))
       case UnionType(types) =>
-        types.map(bisubst(_, subst)).foldLeft(BottomType)(_ \/ _)
+        types.map(bisubst(_, subst)).foldLeft(BottomType[A])(_ \/ _)
       case IntersectionType(types) =>
-        types.map(bisubst(_, subst)).foldLeft(TopType)(_ /\ _)
+        types.map(bisubst(_, subst)).foldLeft(TopType[A])(_ /\ _)
       case VarType(id) =>
-        subst.get(SubstKey(id, A)).fold(typ)(_.asInstanceOf[Type[A]])
+        subst.get(SubstKey(id, A)).orElse(subst.get(SubstKey(id, A.inverse))).fold(typ)(_.asInstanceOf[Type[A]])
       case _ =>
         typ
     }
@@ -151,11 +231,21 @@ object Type {
         biunify(x, y)
       case (TupleType(xs), TupleType(ys)) =>
         xs.zip(ys).foldLeft(BiSubsts.identity) { case (f, (x, y)) => f compose biunify(f(x), f(y)) }
-      case (FunctionType(xs, x), FunctionType(ys, y)) =>
+      case (FunType(xs, x), FunType(ys, y)) =>
         val f = xs.zip(ys).foldLeft(BiSubsts.identity) { case (f, (x, y)) => f compose biunify(f(y), f(x)) }
         f compose biunify(f(x), f(y))
+      case (_, UnionType(ys)) if ys.size == 1 =>
+        biunify(x, ys.head)
+      case (UnionType(xs), UnionType(ys)) if inverseAll(ys).toSet.subsetOf(xs.toSet) =>
+        BiSubsts.identity
       case (UnionType(xs), _) =>
         xs.foldRight(BiSubsts.identity) { (x, f) => f compose biunify(f(x), f(y)) }
+      case (IntersectionType(xs), _) if xs.size == 1 =>
+        biunify(xs.head, y)
+      case (IntersectionType(xs), IntersectionType(ys)) if inverseAll(ys).toSet.subsetOf(xs.toSet) =>
+        BiSubsts.identity
+      case (IntersectionType(xs), _) if xs.contains(y) =>
+        BiSubsts.identity
       case (_, IntersectionType(ys)) =>
         ys.foldRight(BiSubsts.identity) { (y, f) => f compose biunify(f(x), f(y)) }
       case (VarType(id), _) =>
@@ -172,48 +262,38 @@ object Type {
         throw new RuntimeException(s"$x is not $y")
     }
 
-  def removeVar[A <: Polarity](typ: Type[A])(implicit A: A): Type[A] = {
+  def removeVars[A <: Polarity](typ: Type[A], vars: Set[Long], nil: Type[A]): Type[A] =
+    typ match {
+      case ListType(typ) =>
+        ListType(removeVars(typ, vars, nil))
+      case TupleType(types) =>
+        TupleType(types.map(removeVars(_, vars, nil)))
+      case FunType(params, ret) =>
+        FunType(params.map(removeVars(_, vars, nil.asInstanceOf[Type[A#Inverse]])), removeVars(ret, vars, nil))
+      case UnionType(types) =>
+        types.map(removeVars(_, vars, BottomType)).foldLeft(BottomType[A])(_ \/ _)
+      case IntersectionType(types) =>
+        types.map(removeVars(_, vars, TopType)).foldLeft(TopType[A])(_ /\ _)
+      case VarType(id) if vars.contains(id) => nil
+      case _ =>
+        typ
+    }
+
+  def removeVars[A <: Polarity](typ: Type[A])(implicit A: A): Type[A] = {
     val vars = collect(typ).groupBy(_.polarity).mapValues(_.map(_.id).toSet)
     val ps = vars.getOrElse(Pos, Set.empty)
     val ms = vars.getOrElse(Neg, Set.empty)
     val free = (ps | ms) -- (ps & ms)
-    bisubst(typ, free.flatMap(id => List(SubstKey(id, Pos) -> BottomType, SubstKey(id, Neg) -> TopType))(collection.breakOut))
+    //bisubst(typ, free.flatMap(id => List(SubstKey(id, Pos) -> BottomType, SubstKey(id, Neg) -> TopType))(collection.breakOut))
+    removeVars(typ, free, if (A == Pos) BottomType else TopType)
   }
 
   def reassignVar[A <: Polarity](typ: Type[A])(implicit A: A): Type[A] = {
     val vars = collect(typ)
     val index = vars.map(_.id).distinct.zipWithIndex.toMap
-    bisubst(typ, vars.map { case v => v -> VarType(index(v.id)) }(collection.breakOut))
+    bisubst(typ, vars.map(v => v -> VarType(index(v.id)))(collection.breakOut))
   }
 
-  def simplify[A <: Polarity](typ: Type[A])(implicit A: A): Type[A] = reassignVar(removeVar(typ))
-
-  implicit class PosOp(val self: Type[Pos]) extends AnyVal {
-    def \/(that: Type[Pos]): Type[Pos] =
-      (self, that) match {
-        case _ if self == that => self
-        case (UnionType(xs), UnionType(ys)) => (xs ++ ys).foldLeft(BottomType)(_ \/ _)
-        case (UnionType(xs), _) => xs.foldRight(that)(_ \/ _)
-        case (_, UnionType(ys)) if ys.contains(self) => UnionType(ys)
-        case (_, UnionType(ys)) => UnionType(self +: ys)
-        case (ListType(x), ListType(y)) => ListType(x \/ y)
-        case (FunctionType(xs, x), FunctionType(ys, y)) => FunctionType(xs.zip(ys).map { case (x, y) => x /\ y }, x \/ y)
-        case _ => UnionType(Vector(self, that))
-      }
-  }
-
-  implicit class NegOp(val self: Type[Neg]) extends AnyVal {
-    def /\(that: Type[Neg]): Type[Neg] =
-      (self, that) match {
-        case _ if self == that => self
-        case (IntersectionType(xs), IntersectionType(ys)) => (xs ++ ys).foldLeft(TopType)(_ /\ _)
-        case (IntersectionType(xs), _) => xs.foldRight(that)(_ /\ _)
-        case (_, IntersectionType(ys)) if ys.contains(self) => IntersectionType(ys)
-        case (_, IntersectionType(ys)) => IntersectionType(self +: ys)
-        case (ListType(x), ListType(y)) => ListType(x /\ y)
-        case (FunctionType(xs, x), FunctionType(ys, y)) => FunctionType(xs.zip(ys).map { case (x, y) => x \/ y }, x /\ y)
-        case _ => IntersectionType(Vector(self, that))
-      }
-  }
+  def simplify[A <: Polarity](typ: Type[A])(implicit A: A): Type[A] = reassignVar(removeVars(typ))
 
 }

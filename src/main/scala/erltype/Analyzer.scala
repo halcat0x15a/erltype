@@ -21,7 +21,7 @@ class Analyzer extends ErlangBaseListener {
     Option(atomic.tokString).map(tokString => StringTree(tokString.asScala.map(_.getText).mkString)) getOrElse (throw new RuntimeException)
 
   def fromExprMax(expr: ErlangParser.ExprMaxContext): Tree =
-    Option(expr.tokVar).map(tokVar => VarTree(tokVar.getText.hashCode)) orElse
+    Option(expr.tokVar).map(tokVar => if (tokVar.getText == "_") WildCardTree() else VarTree(tokVar.getText.hashCode)) orElse
     Option(expr.atomic).map(fromAtomic) orElse
     Option(expr.expr).map(fromExpr) orElse
     Option(expr.funExpr).map(fromFunExpr) orElse

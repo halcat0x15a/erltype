@@ -26,6 +26,9 @@ object TypingScheme {
       TypingScheme(scheme.env.mapValues(subst(_)), subst(scheme.typ))
     }
     def simplify(implicit A: A): TypingScheme[Type[A]] = {
+      TypingScheme(scheme.env.mapValues(Type.removeVars(_)), Type.removeVars(scheme.typ))
+    }
+    def pretty(implicit A: A): TypingScheme[Type[A]] = {
       TypingScheme(scheme.env.mapValues(Type.simplify(_)), Type.simplify(scheme.typ))
     }
     def show: String = {
