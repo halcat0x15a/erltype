@@ -69,15 +69,14 @@ case class FunTree(name: Option[String], clauses: List[FunClauseTree]) extends T
     val arity = clauses(0).args.size
     val args = List.fill(arity)(VarType[Neg](fresh))
     val ret = VarType[Pos](fresh)
-    val rec = FunctionType[Pos](args, ret)
-    val inv = FunctionType[Neg](args.map(arg => VarType[Pos](arg.id)), VarType[Neg](ret.id))
-    val ext = env ++ name.map(name => Map(s"$name/$arity" -> TypingScheme(Map.empty, rec: Type[Pos]))).getOrElse(Map.empty)
-    clauses.foldLeft((ext, TypingScheme(Map.empty, rec: Type[Pos]))) {
-      case ((env, _), clause) =>
-        val TypingScheme(delta, typ) = clause.check_+(env)
-        val scheme = TypingScheme(delta, rec: Type[Pos]).inst(typ, inv)
-        (name.fold(env)(name => env.updated(s"$name/$arity", scheme)), scheme)
-    }._2
+    val rec: Type[Pos] = FunctionType[Pos](args, ret)
+    val ext = name.fold(env)(name => env + (s"$name/$arity" -> TypingScheme(Map.empty, rec)))
+    clauses.foldLeft(TypingScheme(Map.empty, rec: Type[Pos])) { (scheme, clause) =>
+      for {
+        x <- scheme
+        y <- clause.check_+(ext)
+      } yield x \/ y
+    }
   }
   def check_- = throw new RuntimeException
 }
