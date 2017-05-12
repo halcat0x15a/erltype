@@ -1,15 +1,22 @@
 package erltype
 
+import java.util.concurrent.atomic.AtomicLong
 import scala.collection.JavaConverters._
 import scala.collection.mutable.Buffer
+import scala.collection.mutable.Map
 
 class Analyzer extends ErlangBaseListener {
 
   private var result: Buffer[Tree] = Buffer.empty
 
+  private val alpha: Map[String, Long] = Map.empty
+
   override def exitFunction(ctx: ErlangParser.FunctionContext): Unit = {
     val clauses = ctx.functionClause.asScala
-    val tree = FunTree(Some(clauses(0).tokAtom.getText), clauses.map(clause => makeFunClause(clause.clauseArgs.argumentList, clause.clauseGuard, clause.clauseBody))(collection.breakOut))
+    val tree = FunTree(Some(clauses(0).tokAtom.getText), clauses.map { clause =>
+      alpha.clear()
+      makeFunClause(clause.clauseArgs.argumentList, clause.clauseGuard, clause.clauseBody)
+    }(collection.breakOut))
     result += tree
   }
 
@@ -21,10 +28,11 @@ class Analyzer extends ErlangBaseListener {
     Option(atomic.tokString).map(tokString => StringTree(tokString.asScala.map(_.getText).mkString)) getOrElse (throw new RuntimeException)
 
   def fromExprMax(expr: ErlangParser.ExprMaxContext): Tree =
-    Option(expr.tokVar).map(tokVar => VarTree(tokVar.getText.hashCode)) orElse
+    Option(expr.tokVar).map(tokVar => VarTree(alpha.getOrElseUpdate(tokVar.getText, fresh))) orElse
     Option(expr.atomic).map(fromAtomic) orElse
     Option(expr.expr).map(fromExpr) orElse
     Option(expr.funExpr).map(fromFunExpr) orElse
+    Option(expr.ifExpr).map(fromIfExpr) orElse
     Option(expr.list).map(makeList) getOrElse (throw new RuntimeException)
 
   def fromExpr100(expr: ErlangParser.Expr100Context): Tree = {
@@ -74,6 +82,8 @@ class Analyzer extends ErlangBaseListener {
   def fromFunExpr(fun: ErlangParser.FunExprContext): Tree =
     Option(fun.funClauses).map(funClauses => FunTree(None, funClauses.funClause.asScala.map(clause => makeFunClause(clause.argumentList, clause.clauseGuard, clause.clauseBody))(collection.breakOut))) orElse
     Option(fun.tokAtom).map(tokAtom => FunRefTree(tokAtom.getText, fun.tokInteger.getText.toInt)) getOrElse (throw new RuntimeException)
+
+  def fromIfExpr(expr: ErlangParser.IfExprContext): Tree = ???
 
   def makeList[A](list: ErlangParser.ListContext): ListTree =
     Option(list.expr).map { expr =>

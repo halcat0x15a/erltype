@@ -75,6 +75,7 @@ case class FunTree(name: Option[String], clauses: List[FunClauseTree]) extends T
       for {
         x <- scheme
         y <- clause.check_+(ext)
+        _ = println(y.show)
       } yield x \/ y
     }
   }
