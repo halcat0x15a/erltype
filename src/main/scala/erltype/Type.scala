@@ -1,5 +1,7 @@
 package erltype
 
+import scala.collection.mutable.HashMap
+
 sealed abstract class Polarity extends Product with Serializable {
   type Inverse <: Polarity
   def inverse: Inverse
@@ -25,50 +27,62 @@ object Polarity {
 }
 
 sealed abstract class Type[A <: Polarity] extends Product with Serializable {
+  def inverse: Type[A#Inverse]
   def show: String
 }
 
 case class IntType[A <: Polarity]() extends Type[A] {
+  def inverse = IntType()
   def show = "integer"
 }
 
 case class FloatType[A <: Polarity]() extends Type[A] {
+  def inverse = FloatType()
   def show = "float"
 }
 
 case class CharType[A <: Polarity]() extends Type[A] {
+  def inverse = CharType()
   def show = "char"
 }
 
 case class StringType[A <: Polarity]() extends Type[A] {
+  def inverse = StringType()
   def show = "string"
 }
 
 case class AtomType[A <: Polarity](name: String) extends Type[A] {
+  def inverse = AtomType(name)
   def show = s""""$name""""
 }
 
 case class ListType[A <: Polarity](typ: Type[A]) extends Type[A] {
+  def inverse = ListType(typ.inverse)
   def show = s"[${typ.show}]"
 }
 
 case class TupleType[A <: Polarity](types: List[Type[A]]) extends Type[A] {
+  def inverse = TupleType(types.map(_.inverse))
   def show = s"{${types.map(_.show).mkString}}"
 }
 
 case class UnionType(types: Vector[Type[Pos]]) extends Type[Pos] {
+  def inverse = IntersectionType(types.map(_.inverse))
   def show = if (types.isEmpty) "bottom" else types.map(_.show).mkString(" | ")
 }
 
 case class IntersectionType(types: Vector[Type[Neg]]) extends Type[Neg] {
+  def inverse = UnionType(types.map(_.inverse))
   def show = if (types.isEmpty) "top" else types.map(_.show).mkString(" & ")
 }
 
 case class FunctionType[A <: Polarity](params: List[Type[A#Inverse]], ret: Type[A]) extends Type[A] {
+  def inverse = FunctionType(params.map(_.inverse), ret.inverse)
   def show = s"""(${params.map(_.show).mkString(", ")}) -> ${ret.show}"""
 }
 
 case class VarType[A <: Polarity](id: Long) extends Type[A] {
+  def inverse = VarType(id)
   def show = alphabets(id)
   private[this] def alphabets(n: Long): String = (if (n / 26 > 0) alphabets(n / 26 - 1) else "") + ('A' + n % 26).toChar
 }
@@ -103,6 +117,21 @@ object Type {
   def sum(types: Seq[Type[Pos]]): Type[Pos] = types.foldLeft(BottomType)(_ \/ _)
 
   def prod(types: Seq[Type[Neg]]): Type[Neg] = types.foldLeft(TopType)(_ /\ _)
+
+  def alpha[A <: Polarity](typ: Type[A]): Type[A] = {
+    val table = HashMap.empty[Long, Long]
+    def go[A <: Polarity](typ: Type[A]): Type[A] =
+      typ match {
+        case ListType(typ) => ListType(go(typ))
+        case TupleType(types) => TupleType(types.map(go))
+        case FunctionType(params, ret) => FunctionType(params.map(go), go(ret))
+        case UnionType(types) => UnionType(types.map(go))
+        case IntersectionType(types) => IntersectionType(types.map(go))
+        case VarType(id) => VarType(table.getOrElseUpdate(id, fresh))
+        case _ => typ
+      }
+    go(typ)
+  }
 
   def collect[A <: Polarity](typ: Type[A])(implicit A: A): Vector[SubstKey] =
     typ match {

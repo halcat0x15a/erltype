@@ -20,6 +20,15 @@ case class TypingScheme[A](env: Delta, typ: A) {
 
 object TypingScheme {
 
+  def get[A <: Polarity](env: Delta, typ: Type[Pos]): Type[Neg] = typ match {
+    case VarType(id) => env.getOrElse(id, TopType)
+    case ListType(typ) => ListType(get(env, typ))
+    case TupleType(types) => TupleType(types.map(get(env, _)))
+    case FunctionType(params, ret) => FunctionType(params.map(typ => get(env, typ.inverse).inverse), get(env, ret))
+    case UnionType(types) => IntersectionType(types.map(get(env, _)))
+    case typ => typ.inverse
+  }
+
   implicit class TypeOp[A <: Polarity](val scheme: TypingScheme[Type[A]]) {
     def inst(x: Type[Pos], y: Type[Neg])(implicit A: A): TypingScheme[Type[A]] = {
       val subst = Type.biunify(x, y)

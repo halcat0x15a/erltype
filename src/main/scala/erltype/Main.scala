@@ -34,8 +34,9 @@ object Main extends App {
       env("is_list/1") = TypingScheme(Map.empty, FunctionType[Pos](List(TopType), BooleanType))
       env("andalso/2") = TypingScheme(Map.empty, FunctionType[Pos](List(BooleanType, BooleanType), BooleanType))
       env("length/1") = TypingScheme(Map.empty, FunctionType[Pos](List(ListType(TopType)), IntType()))
-      for (tree@FunTree(Some(name), clauses) <- analyzer.getResult) {
+      for (tree@FunTree(clauses) <- analyzer.getResult) {
         try {
+          val Some(name) = clauses(0).name
           val arity = clauses(0).args.size
           val scheme = tree.check_+(env.toMap)
           env(s"$name/$arity") = scheme

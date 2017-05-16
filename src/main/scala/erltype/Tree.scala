@@ -39,10 +39,11 @@ case class VarTree(id: Long) extends Tree {
 
 case class ListTree(exprs: List[Tree], tail: Option[Tree]) extends Tree {
   def check_+(env: Pi) = {
-    for {
+    val TypingScheme(delta, result) = for {
       types <- Tree.checkAll_+(env, exprs)
       tail <- tail.fold(TypingScheme(Map.empty, BottomType))(_.check_+(env))
     } yield ListType(types.foldLeft(BottomType)(_ \/ _)) \/ tail
+    TypingScheme(delta, result).inst(result, ListType(VarType(fresh)))
   }
   def check_- = {
     for {
@@ -52,29 +53,32 @@ case class ListTree(exprs: List[Tree], tail: Option[Tree]) extends Tree {
   }
 }
 
-case class FunClauseTree(args: List[Tree], guards: List[List[Tree]], body: List[Tree]) extends Tree {
+case class FunClauseTree(name: Option[String], args: List[Tree], guards: List[List[Tree]], body: List[Tree]) extends Tree {
   def check_+(env: Pi) = {
-    val TypingScheme(delta, ret) = for {
-      guards <- Tree.checkAll_+(env, guards.flatten)
+    val arity = args.size
+    val rec: Type[Pos] = FunctionType(List.fill(arity)(VarType(fresh)), VarType(fresh))
+    val ext = name.fold(env)(name => env + (s"$name/$arity" -> TypingScheme(Map.empty, rec)))
+    val ret = for {
+      guards <- Tree.checkAll_+(ext, guards.flatten)
       _ <- TypingScheme(Map.empty, BooleanType[Pos]).inst(TupleType(guards), TupleType(List.fill(guards.size)(BooleanType[Neg])))
-      types <- Tree.checkAll_+(env, body)
+      types <- Tree.checkAll_+(ext, body)
     } yield types.lastOption.getOrElse(BottomType)
-    Tree.checkAll_-(args)(delta).map(FunctionType[Pos](_, ret))
+    val TypingScheme(delta, types) = ret.flatMap(_ => Tree.checkAll_+(Map.empty, args))
+    val params = types.map(TypingScheme.get(delta, _))
+    //println(delta.map { case (k, v) => VarType(k).show -> v.show })
+    //println(rec.show, types.map(_.show))
+    val result = Tree.checkAll_-(args)(delta).map(ps => FunctionType[Pos](params, ret.typ): Type[Pos])
+    result.inst(result.typ, rec.inverse)
   }
   def check_- = throw new RuntimeException
 }
 
-case class FunTree(name: Option[String], clauses: List[FunClauseTree]) extends Tree {
+case class FunTree(clauses: List[FunClauseTree]) extends Tree {
   def check_+(env: Pi) = {
-    val arity = clauses(0).args.size
-    val args = List.fill(arity)(VarType[Neg](fresh))
-    val ret = VarType[Pos](fresh)
-    val rec: Type[Pos] = FunctionType[Pos](args, ret)
-    val ext = name.fold(env)(name => env + (s"$name/$arity" -> TypingScheme(Map.empty, rec)))
-    clauses.foldLeft(TypingScheme(Map.empty, rec: Type[Pos])) { (scheme, clause) =>
+    clauses.foldLeft(TypingScheme(Map.empty, BottomType)) { (scheme, clause) =>
       for {
         x <- scheme
-        y <- clause.check_+(ext)
+        y <- clause.check_+(env)
         _ = println(y.show)
       } yield x \/ y
     }
@@ -83,7 +87,7 @@ case class FunTree(name: Option[String], clauses: List[FunClauseTree]) extends T
 }
 
 case class FunRefTree(name: String, arity: Int) extends Tree {
-  def check_+(env: Pi) = env(s"$name/$arity")
+  def check_+(env: Pi) = env(s"$name/$arity").map(Type.alpha)
   def check_- = throw new RuntimeException
 }
 
