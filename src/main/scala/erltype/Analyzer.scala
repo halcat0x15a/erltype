@@ -32,7 +32,9 @@ class Analyzer extends ErlangBaseListener {
     Option(expr.list).map(makeList) getOrElse (throw new RuntimeException)
 
   def fromExpr100(expr: ErlangParser.Expr100Context): Tree = {
-    expr.expr150.asScala.map(fromExpr150).reduceRight(AssignTree(_, _))
+    val exprs = expr.expr150.asScala.map(fromExpr150)
+    val ops = expr.matchOrSend.asScala.map(_.getText)
+    makeMatchOrSend(exprs, ops)
   }
 
   def fromExpr150(expr: ErlangParser.Expr150Context): Tree = {
@@ -112,6 +114,17 @@ class Analyzer extends ErlangBaseListener {
     val head +: tail = exprs
     tail.zip(ops).foldLeft(head) {
       case (lhs, (rhs, op)) => FunCallTree(FunRefTree(op, 2), List(lhs, rhs))
+    }
+  }
+
+  def makeMatchOrSend(exprs: Seq[Tree], ops: Seq[String]): Tree = {
+    val init :+ last = exprs
+    init.zip(ops).foldRight(last) {
+      case ((lhs, op), rhs) =>
+        if (op == "=")
+          MatchTree(lhs, rhs)
+        else
+          FunCallTree(FunRefTree(op, 2), List(lhs, rhs))
     }
   }
 

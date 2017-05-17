@@ -179,7 +179,7 @@ clauseBody : '->' exprs ;
 expr : 'catch' expr
      | expr100 ;
 
-expr100 : expr150 (('=' | '!') expr150)* ;
+expr100 : expr150 (matchOrSend expr150)* ;
 
 expr150 : expr160 ('orelse' expr160)* ;
 
@@ -342,6 +342,10 @@ atomic : tokChar
        | tokAtom
        | (tokString)+
        ;
+
+matchOrSend : '='
+            | '!'
+            ;
 
 prefixOp : '+'
          | '-'
