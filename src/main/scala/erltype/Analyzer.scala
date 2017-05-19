@@ -3,16 +3,20 @@ package erltype
 import java.util.concurrent.atomic.AtomicLong
 import scala.collection.JavaConverters._
 import scala.collection.mutable.Buffer
+import scala.collection.mutable.HashMap
 
 class Analyzer extends ErlangBaseListener {
 
   private var result: Buffer[Tree[_ <: Polarity]] = Buffer.empty
+
+  private var table: HashMap[String, Long] = HashMap.empty
 
   def untype[A <: Polarity](tree: Tree[_ <: Polarity]): Tree[A] = tree.asInstanceOf[Tree[A]]
 
   override def exitFunction(ctx: ErlangParser.FunctionContext): Unit = {
     val clauses = ctx.functionClause.asScala
     val tree = FunTree(clauses.map { clause =>
+      table.clear()
       makeFunClause(Some(clause.tokAtom.getText), clause.clauseArgs.argumentList, clause.clauseGuard, clause.clauseBody)
     }(collection.breakOut))
     result += tree
@@ -26,11 +30,12 @@ class Analyzer extends ErlangBaseListener {
     Option(atomic.tokString).map(tokString => StringTree[A](tokString.asScala.map(_.getText).mkString)) getOrElse (throw new RuntimeException)
 
   def fromExprMax(expr: ErlangParser.ExprMaxContext): Tree[_ <: Polarity] =
-    Option(expr.tokVar).map(tokVar => VarTree(tokVar.getText.hashCode)) orElse
+    Option(expr.tokVar).map(tokVar => VarTree(table.getOrElseUpdate(tokVar.getText, fresh))) orElse
     Option(expr.atomic).map(fromAtomic) orElse
     Option(expr.expr).map(fromExpr) orElse
     Option(expr.funExpr).map(fromFunExpr) orElse
     Option(expr.ifExpr).map(fromIfExpr) orElse
+    Option(expr.tuple).map(makeTuple) orElse
     Option(expr.list).map(makeList) getOrElse (throw new RuntimeException)
 
   def fromExpr100(expr: ErlangParser.Expr100Context): Tree[_ <: Polarity] = {
@@ -83,7 +88,19 @@ class Analyzer extends ErlangBaseListener {
     Option(fun.funClauses).map(funClauses => FunTree(funClauses.funClause.asScala.map(clause => makeFunClause(None, clause.argumentList, clause.clauseGuard, clause.clauseBody))(collection.breakOut))) orElse
     Option(fun.tokAtom).map(tokAtom => FunRefTree(tokAtom.getText, fun.tokInteger.getText.toInt)) getOrElse (throw new RuntimeException)
 
-  def fromIfExpr(expr: ErlangParser.IfExprContext): Tree[_ <: Polarity] = ???
+  def makeIfClause(guard: Option[ErlangParser.GuardContext], body: ErlangParser.ClauseBodyContext): IfClauseTree =
+    IfClauseTree(
+      guard.toList.flatMap(_.exprs.asScala.flatMap(_.expr.asScala.map(expr => untype[Pos](fromExpr(expr)))(collection.breakOut))),
+      body.exprs.expr.asScala.map(expr => untype[Pos](fromExpr(expr)))(collection.breakOut)
+    )
+
+  def fromIfExpr(expr: ErlangParser.IfExprContext): Tree[_ <: Polarity] =
+    IfTree(
+      expr.ifClauses.ifClause.asScala.map(clause => makeIfClause(Some(clause.guard), clause.clauseBody))(collection.breakOut)
+    )
+
+  def makeTuple[A <: Polarity](tuple: ErlangParser.TupleContext): TupleTree[A] =
+    TupleTree(Option(tuple.exprs).toList.flatMap(_.expr.asScala.map(expr => untype[A](fromExpr(expr)))))
 
   def makeList[A <: Polarity](list: ErlangParser.ListContext): ListTree[A] =
     Option(list.expr).map { expr =>
@@ -108,10 +125,7 @@ class Analyzer extends ErlangBaseListener {
     FunClauseTree(
       name,
       Option(args.exprs).toList.flatMap(_.expr.asScala.map(expr => untype[Neg](fromExpr(expr)))),
-      IfClauseTree(
-        Option(guards.guard).toList.flatMap(_.exprs.asScala.flatMap(_.expr.asScala.map(expr => untype[Pos](fromExpr(expr)))(collection.breakOut))),
-        body.exprs.expr.asScala.map(expr => untype[Pos](fromExpr(expr)))(collection.breakOut)
-      )
+      makeIfClause(Option(guards.guard), body)
     )
 
   def makeBinOpCall(exprs: Seq[Tree[_ <: Polarity]], ops: Seq[String]): Tree[_ <: Polarity] = {

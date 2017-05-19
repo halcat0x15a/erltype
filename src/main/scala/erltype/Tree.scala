@@ -16,6 +16,8 @@ case class VarTree[A <: Polarity](id: Long) extends Tree[A]
 
 case class ListTree[A <: Polarity](exprs: List[Tree[A]], tail: Option[Tree[A]]) extends Tree[A]
 
+case class TupleTree[A <: Polarity](exprs: List[Tree[A]]) extends Tree[A]
+
 case class IfTree(clauses: List[IfClauseTree]) extends Tree[Pos]
 
 case class IfClauseTree(guard: List[Tree[Pos]], body: List[Tree[Pos]]) extends Tree[Pos]
@@ -72,6 +74,8 @@ object Tree {
           val list = ListType(sum(types)) \/ tail
           (list, list, ListType(VarType(fresh)))
         })
+      case TupleTree(exprs) =>
+        checkAll(env, exprs).map(TupleType(_))
       case IfTree(clauses) =>
         checkAll(env, clauses).map(sum)
       case IfClauseTree(guards, body) =>
@@ -85,20 +89,20 @@ object Tree {
         val arity = args.size
         val rec: Type[Pos] = FunctionType(List.fill(arity)(VarType(fresh)), VarType(fresh))
         val ext = name.fold(env)(name => env + (s"$name/$arity" -> TypingScheme(rec)))
-        TypingScheme.simplify(TypingScheme.inst(for {
+        val x = TypingScheme.simplify(TypingScheme.inst(for {
           (delta, ret) <- clause.check(ext).get
           params <- patternAll(delta, args)
         } yield {
           val fun = FunctionType[Pos](params, ret): Type[Pos]
           (fun, fun, rec.inverse)
         }))
+        x
       case FunTree(clauses) =>
         //checkAll(env, clauses).map(sum)
         clauses.foldLeft(TypingScheme(BottomType)) { (scheme, expr) =>
           for {
             x <- scheme
             y <- expr.check(env)
-            //_ = println(y.show)
           } yield x \/ y
         }
       case FunRefTree(name, arity) =>
@@ -131,6 +135,8 @@ object Tree {
         TypingScheme(env, StringType())
       case VarTree(id) =>
         TypingScheme(env, Vector(id), env.getOrElse(id, VarType(id)))
+      case TupleTree(exprs) =>
+        patternAll(env, exprs).map(TupleType(_))
       case ListTree(exprs, tail) =>
         TypingScheme.inst(for {
           types <- patternAll(env, exprs)

@@ -63,7 +63,7 @@ case class ListType[A <: Polarity](typ: Type[A]) extends Type[A] {
 
 case class TupleType[A <: Polarity](types: List[Type[A]]) extends Type[A] {
   def inverse = TupleType(types.map(_.inverse))
-  def show = s"{${types.map(_.show).mkString}}"
+  def show = s"""{${types.map(_.show).mkString(", ")}}"""
 }
 
 case class UnionType(types: Vector[Type[Pos]]) extends Type[Pos] {
@@ -198,12 +198,45 @@ object Type {
         throw new RuntimeException(s"$x is not $y")
     }
 
+  def findVar[A <: Polarity](types: Vector[Type[A]], acc: Vector[Type[A]] = Vector.empty): (Option[VarType[A]], Vector[Type[A]]) = {
+    if (types.isEmpty) {
+      (None, acc)
+    } else {
+      types.head match {
+        case v@VarType(_) => (Some(v), types.tail ++ acc)
+        case t => findVar(types.tail, t +: acc)
+      }
+    }
+  }
+
+  def simplify[A <: Polarity](typ: Type[A])(implicit A: A): Type[A] = {
+    def go[B <: Polarity](typ: Type[B], result: Type[A]): Type[A] =
+      typ match {
+        case ListType(typ) => go(typ, result)
+        case TupleType(types) => types.foldLeft(result)((result, typ) => go(typ, result))
+        case FunctionType(params, ret) => params.foldLeft(go(ret, result))((result, param) => go(param, result))
+        case UnionType(types) => types.foldLeft(result)((result, typ) => go(typ, result))
+        case IntersectionType(types) =>
+          val (v, rest) = findVar(types)
+          v.fold(types.foldLeft(result)((result, typ) => go(typ, result))) {
+            case VarType(id) => if (rest.isEmpty) {
+              result
+            } else {
+              go(IntersectionType(rest), bisubst(result, Map(SubstKey(id, Neg) -> IntersectionType(rest), SubstKey(id, Pos) -> IntersectionType(rest).inverse)))
+            }
+          }
+        case _ => result
+      }
+    go(typ, typ)
+  }
+
   def removeVar[A <: Polarity](typ: Type[A])(implicit A: A): Type[A] = {
-    val vars = collect(typ).groupBy(_.polarity).mapValues(_.map(_.id).toSet)
-    val ps = vars.getOrElse(Pos, Set.empty)
-    val ms = vars.getOrElse(Neg, Set.empty)
-    val free = (ps | ms) -- (ps & ms)
-    bisubst(typ, free.flatMap(id => List(SubstKey(id, Pos) -> BottomType, SubstKey(id, Neg) -> TopType))(collection.breakOut))
+    val vars = collect(typ).groupBy(_.id).mapValues(_.size)
+    val subst = vars.flatMap {
+      case (id, n) if n == 1 => List(SubstKey(id, Pos) -> BottomType, SubstKey(id, Neg) -> TopType)
+      case _ => Nil
+    }
+    bisubst(typ, subst)
   }
 
   def reassignVar[A <: Polarity](typ: Type[A])(implicit A: A): Type[A] = {
@@ -212,7 +245,7 @@ object Type {
     bisubst(typ, vars.map { case v => v -> VarType(index(v.id)) }(collection.breakOut))
   }
 
-  def pretty[A <: Polarity](typ: Type[A])(implicit A: A): Type[A] = reassignVar(removeVar(typ))
+  def pretty[A <: Polarity](typ: Type[A])(implicit A: A): Type[A] = reassignVar(simplify(removeVar(typ)))
 
   implicit class PosOp(val self: Type[Pos]) extends AnyVal {
     def \/(that: Type[Pos]): Type[Pos] =

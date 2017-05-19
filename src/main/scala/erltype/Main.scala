@@ -25,6 +25,8 @@ object Main extends App {
       }
       env("+/2") = TypingScheme(Map.empty, FunctionType(List(IntType(), IntType()), IntType()))
       env("-/2") = TypingScheme(Map.empty, FunctionType(List(IntType(), IntType()), IntType()))
+      env("*/2") = TypingScheme(Map.empty, FunctionType(List(IntType(), IntType()), IntType()))
+      env("div/2") = TypingScheme(Map.empty, FunctionType(List(IntType(), IntType()), IntType()))
       env(">/2") = TypingScheme(Map.empty, FunctionType(List(IntType(), IntType()), BooleanType))
       env("</2") = TypingScheme(Map.empty, FunctionType(List(IntType(), IntType()), BooleanType))
       env(">=/2") = TypingScheme(Map.empty, FunctionType(List(IntType(), IntType()), BooleanType))
@@ -32,6 +34,7 @@ object Main extends App {
       env("=:=/2") = TypingScheme(Map.empty, FunctionType[Pos](List(TopType, TopType), BooleanType))
       env("is_integer/1") = TypingScheme(Map.empty, FunctionType[Pos](List(TopType), BooleanType))
       env("is_list/1") = TypingScheme(Map.empty, FunctionType[Pos](List(TopType), BooleanType))
+      env("is_function/2") = TypingScheme(Map.empty, FunctionType[Pos](List(TopType, IntType()), BooleanType))
       env("andalso/2") = TypingScheme(Map.empty, FunctionType[Pos](List(BooleanType, BooleanType), BooleanType))
       env("length/1") = TypingScheme(Map.empty, FunctionType[Pos](List(ListType(TopType)), IntType()))
       for (tree@FunTree(clauses) <- analyzer.getResult) {
@@ -42,7 +45,9 @@ object Main extends App {
           env(s"$name/$arity") = TypingScheme.simplify(scheme)
           println(s"$name/$arity:${scheme.pretty.show}")
         } catch {
-          case e: Throwable => println(e)
+          case e: Throwable =>
+            e.printStackTrace
+            //println(e)
         }
       }
     }
