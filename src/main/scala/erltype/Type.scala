@@ -114,10 +114,6 @@ object BiSubsts {
 
 object Type {
 
-  def sum(types: Seq[Type[Pos]]): Type[Pos] = types.foldLeft(BottomType)(_ \/ _)
-
-  def prod(types: Seq[Type[Neg]]): Type[Neg] = types.foldLeft(TopType)(_ /\ _)
-
   def alpha[A <: Polarity](typ: Type[A]): Type[A] = {
     val table = HashMap.empty[Long, Long]
     def go[A <: Polarity](typ: Type[A]): Type[A] =
@@ -216,7 +212,7 @@ object Type {
     bisubst(typ, vars.map { case v => v -> VarType(index(v.id)) }(collection.breakOut))
   }
 
-  def simplify[A <: Polarity](typ: Type[A])(implicit A: A): Type[A] = reassignVar(removeVar(typ))
+  def pretty[A <: Polarity](typ: Type[A])(implicit A: A): Type[A] = reassignVar(removeVar(typ))
 
   implicit class PosOp(val self: Type[Pos]) extends AnyVal {
     def \/(that: Type[Pos]): Type[Pos] =

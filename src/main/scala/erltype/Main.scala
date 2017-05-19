@@ -39,8 +39,8 @@ object Main extends App {
           val Some(name) = clauses(0).name
           val arity = clauses(0).args.size
           val scheme = tree.check(env.toMap)
-          env(s"$name/$arity") = scheme
-          println(s"$name/$arity:${scheme.simplify.show}")
+          env(s"$name/$arity") = TypingScheme.simplify(scheme)
+          println(s"$name/$arity:${scheme.pretty.show}")
         } catch {
           case e: Throwable => println(e)
         }

@@ -1,104 +1,150 @@
 package erltype
 
-sealed abstract class Tree {
-  def check(env: Pi): TypingScheme[Type[Pos]]
-}
+sealed abstract class Tree[A <: Polarity] extends Product with Serializable
 
-sealed abstract class PatternTree extends Tree {
-  def pattern(env: Delta): TypingScheme[Type[Neg]] = ???
-}
+case class IntTree[A <: Polarity](value: Int) extends Tree[A]
 
-case class IntTree(value: Int) extends PatternTree {
-  def check(env: Pi) = TypingScheme(Map.empty, IntType())
-}
+case class FloatTree[A <: Polarity](value: Float) extends Tree[A]
 
-case class FloatTree(value: Float) extends PatternTree {
-  def check(env: Pi) = TypingScheme(Map.empty, FloatType())
-}
+case class CharTree[A <: Polarity](value: Char) extends Tree[A]
 
-case class CharTree(value: Char) extends PatternTree {
-  def check(env: Pi) = TypingScheme(Map.empty, CharType())
-}
+case class AtomTree[A <: Polarity](value: String) extends Tree[A]
 
-case class AtomTree(value: String) extends PatternTree {
-  def check(env: Pi) = TypingScheme(Map.empty, AtomType(value))
-}
+case class StringTree[A <: Polarity](value: String) extends Tree[A]
 
-case class StringTree(value: String) extends PatternTree {
-  def check(env: Pi) = TypingScheme(Map.empty, StringType())
-}
+case class VarTree[A <: Polarity](id: Long) extends Tree[A]
 
-case class VarTree(id: Long) extends PatternTree {
-  def check(env: Pi) = TypingScheme(Map(id -> VarType(id)), VarType(id))
-}
+case class ListTree[A <: Polarity](exprs: List[Tree[A]], tail: Option[Tree[A]]) extends Tree[A]
 
-case class ListTree(exprs: List[Tree], tail: Option[Tree]) extends PatternTree {
-  def check(env: Pi) = {
-    val TypingScheme(delta, result) = for {
-      types <- Tree.checkAll(env, exprs)
-      tail <- tail.fold(TypingScheme(Map.empty, BottomType))(_.check(env))
-    } yield ListType(types.foldLeft(BottomType)(_ \/ _)) \/ tail
-    TypingScheme(delta, result).inst(result, ListType(VarType(fresh)))
-  }
-}
+case class IfTree(clauses: List[IfClauseTree]) extends Tree[Pos]
 
-case class FunClauseTree(name: Option[String], args: List[Tree], guards: List[List[Tree]], body: List[Tree]) extends Tree {
-  def check(env: Pi) = {
-    val arity = args.size
-    val rec: Type[Pos] = FunctionType(List.fill(arity)(VarType(fresh)), VarType(fresh))
-    val ext = name.fold(env)(name => env + (s"$name/$arity" -> TypingScheme(Map.empty, rec)))
-    val ret = for {
-      guards <- Tree.checkAll(ext, guards.flatten)
-      _ <- TypingScheme(Map.empty, BooleanType[Pos]).inst(TupleType(guards), TupleType(List.fill(guards.size)(BooleanType[Neg])))
-      types <- Tree.checkAll(ext, body)
-    } yield types.lastOption.getOrElse(BottomType)
-    val TypingScheme(delta, types) = ret.flatMap(_ => Tree.checkAll(Map.empty, args))
-    val params = types.map(TypingScheme.get(delta, _))
-    //println(delta.map { case (k, v) => VarType(k).show -> v.show })
-    //println(rec.show, types.map(_.show))
-    val result = TypingScheme(delta -- params.flatMap(Type.collect(_)).map(_.id), FunctionType[Pos](params, ret.typ): Type[Pos])
-    result.inst(result.typ, rec.inverse)
-  }
-}
+case class IfClauseTree(guard: List[Tree[Pos]], body: List[Tree[Pos]]) extends Tree[Pos]
 
-case class FunTree(clauses: List[FunClauseTree]) extends Tree {
-  def check(env: Pi) = {
-    clauses.foldLeft(TypingScheme(Map.empty, BottomType)) { (scheme, clause) =>
-      for {
-        x <- scheme
-        y <- clause.check(env)
-        _ = println(y.show)
-      } yield x \/ y
-    }
-  }
-}
+case class FunClauseTree(name: Option[String], args: List[Tree[Neg]], clause: IfClauseTree) extends Tree[Pos]
 
-case class FunRefTree(name: String, arity: Int) extends Tree {
-  def check(env: Pi) = env(s"$name/$arity").map(Type.alpha)
-}
+case class FunTree(clauses: List[FunClauseTree]) extends Tree[Pos]
 
-case class FunCallTree(fun: Tree, args: List[Tree]) extends Tree {
-  def check(env: Pi) = {
-    val TypingScheme(delta, (f, types)) = for {
-      types <- Tree.checkAll(env, args)
-      f <- fun.check(env)
-    } yield (f, types)
-    val v = fresh
-    TypingScheme[Type[Pos]](delta, VarType(v)).inst(f, FunctionType[Neg](types, VarType(v)))
-  }
-}
+case class FunRefTree(name: String, arity: Int) extends Tree[Pos]
 
-case class MatchTree(lhs: Tree, rhs: Tree) extends Tree {
-  def check(env: Pi) = ???
-}
+case class FunCallTree(fun: Tree[Pos], args: List[Tree[Pos]]) extends Tree[Pos]
+
+case class MatchTree[A <: Polarity](lhs: Tree[Neg], rhs: Tree[A]) extends Tree[A]
 
 object Tree {
-  def checkAll(env: Pi, tree: Seq[Tree]): TypingScheme[List[Type[Pos]]] = {
-    tree.foldRight(TypingScheme(Map.empty, List.empty[Type[Pos]])) { (expr, scheme) =>
+
+  def checkAll(env: Pi, tree: Seq[Tree[Pos]]): TypingScheme[List[Type[Pos]]] = {
+    tree.foldRight(TypingScheme(List.empty[Type[Pos]])) { (expr, scheme) =>
       for {
         types <- scheme
         typ <- expr.check(env)
       } yield typ :: types
     }
   }
+
+  def patternAll(env: Delta, tree: Seq[Tree[Neg]]): TypingScheme[List[Type[Neg]]] = {
+    tree.foldRight(TypingScheme(List.empty[Type[Neg]])) { (expr, scheme) =>
+      for {
+        types <- scheme
+        typ <- expr.pattern(env)
+      } yield typ :: types
+    }
+  }
+
+  implicit class PosOp(self: Tree[Pos]) {
+    def check(env: Pi): TypingScheme[Type[Pos]] = self match {
+      case IntTree(_) =>
+        TypingScheme(IntType())
+      case FloatTree(_) =>
+        TypingScheme(FloatType())
+      case CharTree(_) =>
+        TypingScheme(CharType())
+      case AtomTree(name) =>
+        TypingScheme(AtomType(name))
+      case StringTree(_) =>
+        TypingScheme(StringType())
+      case VarTree(id) =>
+        TypingScheme(Map(id -> VarType(id)), VarType(id))
+      case ListTree(exprs, tail) =>
+        TypingScheme.inst(for {
+          types <- checkAll(env, exprs)
+          tail <- tail.fold(TypingScheme(BottomType))(_.check(env))
+        } yield {
+          val list = ListType(sum(types)) \/ tail
+          (list, list, ListType(VarType(fresh)))
+        })
+      case IfTree(clauses) =>
+        checkAll(env, clauses).map(sum)
+      case IfClauseTree(guards, body) =>
+        for {
+          _ <- TypingScheme.inst(checkAll(env, guards).map { bools =>
+            (BooleanType[Pos], TupleType(bools): Type[Pos], TupleType(List.fill(guards.size)(BooleanType[Neg])): Type[Neg])
+          })
+          types <- checkAll(env, body)
+        } yield types.lastOption.getOrElse(BottomType)
+      case FunClauseTree(name, args, clause) =>
+        val arity = args.size
+        val rec: Type[Pos] = FunctionType(List.fill(arity)(VarType(fresh)), VarType(fresh))
+        val ext = name.fold(env)(name => env + (s"$name/$arity" -> TypingScheme(rec)))
+        TypingScheme.simplify(TypingScheme.inst(for {
+          (delta, ret) <- clause.check(ext).get
+          params <- patternAll(delta, args)
+        } yield {
+          val fun = FunctionType[Pos](params, ret): Type[Pos]
+          (fun, fun, rec.inverse)
+        }))
+      case FunTree(clauses) =>
+        //checkAll(env, clauses).map(sum)
+        clauses.foldLeft(TypingScheme(BottomType)) { (scheme, expr) =>
+          for {
+            x <- scheme
+            y <- expr.check(env)
+            //_ = println(y.show)
+          } yield x \/ y
+        }
+      case FunRefTree(name, arity) =>
+        env(s"$name/$arity").map(Type.alpha)
+      case FunCallTree(fun, args) =>
+        val v = fresh
+        TypingScheme.inst(for {
+          pos <- fun.check(env)
+          types <- Tree.checkAll(env, args)
+        } yield (VarType[Pos](v), pos, FunctionType[Neg](types, VarType(v))))
+      case MatchTree(lhs, rhs) =>
+        TypingScheme.inst(for {
+          (delta, pos) <- rhs.check(env).get
+          neg <- lhs.pattern(delta)
+        } yield (pos, pos, neg))
+    }
+  }
+
+  implicit class NegOp(self: Tree[Neg]) {
+    def pattern(env: Delta): TypingScheme[Type[Neg]] = self match {
+      case IntTree(_) =>
+        TypingScheme(env, IntType())
+      case FloatTree(_) =>
+        TypingScheme(env, FloatType())
+      case CharTree(_) =>
+        TypingScheme(env, CharType())
+      case AtomTree(name) =>
+        TypingScheme(env, AtomType(name))
+      case StringTree(_) =>
+        TypingScheme(env, StringType())
+      case VarTree(id) =>
+        TypingScheme(env, Vector(id), env.getOrElse(id, VarType(id)))
+      case ListTree(exprs, tail) =>
+        TypingScheme.inst(for {
+          types <- patternAll(env, exprs)
+          tail <- tail.fold(TypingScheme(TopType))(_.pattern(env))
+        } yield {
+          val list = ListType(prod(types)) /\ tail
+          (list, ListType(VarType(fresh)), list)
+        })
+      case MatchTree(lhs, rhs) =>
+        TypingScheme.inst(for {
+          l <- lhs.pattern(env)
+          r <- rhs.pattern(env)
+        } yield (l, l.inverse, r))
+    }
+  }
+
 }

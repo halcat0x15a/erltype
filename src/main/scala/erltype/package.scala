@@ -6,9 +6,15 @@ package object erltype {
 
   type Pi = Map[String, TypingScheme[Type[Pos]]]
 
+  type Vars = Vector[Long]
+
   val TopType: Type[Neg] = IntersectionType(Vector.empty)
 
   val BottomType: Type[Pos] = UnionType(Vector.empty)
+
+  def sum(types: Seq[Type[Pos]]): Type[Pos] = types.foldLeft(BottomType)(_ \/ _)
+
+  def prod(types: Seq[Type[Neg]]): Type[Neg] = types.foldLeft(TopType)(_ /\ _)
 
   def BooleanType[A <: Polarity]: Type[A] = AtomType("true")
 
