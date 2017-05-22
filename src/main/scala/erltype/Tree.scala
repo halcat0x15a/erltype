@@ -1,36 +1,90 @@
 package erltype
 
-sealed abstract class Tree[A <: Polarity] extends Product with Serializable
+sealed abstract class Tree[A <: Polarity] extends Product with Serializable {
+  def show: String
+}
 
-case class IntTree[A <: Polarity](value: Int) extends Tree[A]
+case class IntTree[A <: Polarity](value: Int) extends Tree[A] {
+  def show = value.toString
+}
 
-case class FloatTree[A <: Polarity](value: Float) extends Tree[A]
+case class FloatTree[A <: Polarity](value: Float) extends Tree[A] {
+  def show = value.toString
+}
 
-case class CharTree[A <: Polarity](value: Char) extends Tree[A]
+case class CharTree[A <: Polarity](value: Char) extends Tree[A] {
+  def show = value.toString
+}
 
-case class AtomTree[A <: Polarity](value: String) extends Tree[A]
+case class AtomTree[A <: Polarity](value: String) extends Tree[A] {
+  def show = s"'$value'"
+}
 
-case class StringTree[A <: Polarity](value: String) extends Tree[A]
+case class StringTree[A <: Polarity](value: String) extends Tree[A] {
+  def show = s"""$value"""
+}
 
-case class VarTree[A <: Polarity](id: Long) extends Tree[A]
+case class VarTree[A <: Polarity](id: Long) extends Tree[A] {
+  def show = alphabets(id)
+}
 
-case class ListTree[A <: Polarity](exprs: List[Tree[A]], tail: Option[Tree[A]]) extends Tree[A]
+case class ListTree[A <: Polarity](exprs: List[Tree[A]], tail: Option[Tree[A]]) extends Tree[A] {
+  def show = {
+    val h = exprs.map(_.show).mkString(", ")
+    val t = tail.fold("")(e => s" | ${e.show}")
+    s"[$h$t]"
+  }
+}
 
-case class TupleTree[A <: Polarity](exprs: List[Tree[A]]) extends Tree[A]
+case class TupleTree[A <: Polarity](exprs: List[Tree[A]]) extends Tree[A] {
+  def show = exprs.map(_.show).mkString("{", ", ", "}")
+}
 
-case class IfTree(clauses: List[IfClauseTree]) extends Tree[Pos]
+case class BlockTree(exprs: List[Tree[Pos]]) extends Tree[Pos] {
+  def show = exprs.map(_.show).mkString(", ")
+}
 
-case class IfClauseTree(guard: List[Tree[Pos]], body: List[Tree[Pos]]) extends Tree[Pos]
+case class IfTree(clauses: List[IfClauseTree]) extends Tree[Pos] {
+  def show = {
+    val cs = clauses.map(_.show).mkString("; ")
+    s"if $cs end"
+  }
+}
 
-case class FunClauseTree(name: Option[String], args: List[Tree[Neg]], clause: IfClauseTree) extends Tree[Pos]
+case class IfClauseTree(guard: List[Tree[Pos]], body: Tree[Pos]) extends Tree[Pos] {
+  def show = {
+    val w = if (guard.isEmpty) "" else "when "
+    val g = guard.map(_.show).mkString(", ")
+    s"$w$g-> ${body.show}"
+  }
+}
 
-case class FunTree(clauses: List[FunClauseTree]) extends Tree[Pos]
+case class FunClauseTree(name: Option[String], args: List[Tree[Neg]], clause: IfClauseTree) extends Tree[Pos] {
+  def show = {
+    val n = name.getOrElse("fun")
+    val as = args.map(_.show).mkString(", ")
+    s"$n($as) ${clause.show} end"
+  }
+}
 
-case class FunRefTree(name: String, arity: Int) extends Tree[Pos]
+case class FunTree(clauses: List[FunClauseTree]) extends Tree[Pos] {
+  def show = clauses.map(_.show).mkString(";\n")
+}
 
-case class FunCallTree(fun: Tree[Pos], args: List[Tree[Pos]]) extends Tree[Pos]
+case class FunRefTree(name: String, arity: Int) extends Tree[Pos] {
+  def show = s"(fun $name/$arity)"
+}
 
-case class MatchTree[A <: Polarity](lhs: Tree[Neg], rhs: Tree[A]) extends Tree[A]
+case class FunCallTree(fun: Tree[Pos], args: List[Tree[Pos]]) extends Tree[Pos] {
+  def show = {
+    val as = args.map(_.show).mkString(", ")
+    s"${fun.show}($as)"
+  }
+}
+
+case class MatchTree(lhs: Tree[Neg], rhs: Tree[Neg]) extends Tree[Neg] {
+  def show = s"${lhs.show} = ${rhs.show}"
+}
 
 object Tree {
 
@@ -76,6 +130,7 @@ object Tree {
         })
       case TupleTree(exprs) =>
         checkAll(env, exprs).map(TupleType(_))
+      case BlockTree(exprs) => checkAll(env, exprs.reverse).map(_.headOption.getOrElse(BottomType))
       case IfTree(clauses) =>
         checkAll(env, clauses).map(sum)
       case IfClauseTree(guards, body) =>
@@ -83,8 +138,8 @@ object Tree {
           _ <- TypingScheme.inst(checkAll(env, guards).map { bools =>
             (BooleanType[Pos], TupleType(bools): Type[Pos], TupleType(List.fill(guards.size)(BooleanType[Neg])): Type[Neg])
           })
-          types <- checkAll(env, body)
-        } yield types.lastOption.getOrElse(BottomType)
+          typ <- body.check(env)
+        } yield typ
       case FunClauseTree(name, args, clause) =>
         val arity = args.size
         val rec: Type[Pos] = FunctionType(List.fill(arity)(VarType(fresh)), VarType(fresh))
@@ -113,11 +168,6 @@ object Tree {
           pos <- fun.check(env)
           types <- Tree.checkAll(env, args)
         } yield (VarType[Pos](v), pos, FunctionType[Neg](types, VarType(v))))
-      case MatchTree(lhs, rhs) =>
-        TypingScheme.inst(for {
-          (delta, pos) <- rhs.check(env).get
-          neg <- lhs.pattern(delta)
-        } yield (pos, pos, neg))
     }
   }
 

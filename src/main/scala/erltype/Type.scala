@@ -53,7 +53,7 @@ case class StringType[A <: Polarity]() extends Type[A] {
 
 case class AtomType[A <: Polarity](name: String) extends Type[A] {
   def inverse = AtomType(name)
-  def show = s""""$name""""
+  def show = s"'$name'"
 }
 
 case class ListType[A <: Polarity](typ: Type[A]) extends Type[A] {
@@ -84,7 +84,6 @@ case class FunctionType[A <: Polarity](params: List[Type[A#Inverse]], ret: Type[
 case class VarType[A <: Polarity](id: Long) extends Type[A] {
   def inverse = VarType(id)
   def show = alphabets(id)
-  private[this] def alphabets(n: Long): String = (if (n / 26 > 0) alphabets(n / 26 - 1) else "") + ('A' + n % 26).toChar
 }
 
 case class SubstKey(id: Long, polarity: Polarity)

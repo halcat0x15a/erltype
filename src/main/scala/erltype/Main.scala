@@ -11,8 +11,8 @@ object Main extends App {
     val path = Paths.get(name)
     if (Files.exists(path)) {
       val parser = new ErlangParser(new CommonTokenStream(new ErlangLexer(new ANTLRInputStream(Files.newInputStream(path)))))
-      val analyzer = new Analyzer
-      parser.addParseListener(analyzer)
+      val listener = new ParseListener
+      parser.addParseListener(listener)
       parser.forms()
       val env = HashMap.empty[String, TypingScheme[Type[Pos]]]
       env("++/2") = {
@@ -37,7 +37,7 @@ object Main extends App {
       env("is_function/2") = TypingScheme(Map.empty, FunctionType[Pos](List(TopType, IntType()), BooleanType))
       env("andalso/2") = TypingScheme(Map.empty, FunctionType[Pos](List(BooleanType, BooleanType), BooleanType))
       env("length/1") = TypingScheme(Map.empty, FunctionType[Pos](List(ListType(TopType)), IntType()))
-      for (tree@FunTree(clauses) <- analyzer.getResult) {
+      for (tree@FunTree(clauses) <- listener.getResult) {
         try {
           val Some(name) = clauses(0).name
           val arity = clauses(0).args.size

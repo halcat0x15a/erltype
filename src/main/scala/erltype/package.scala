@@ -22,4 +22,6 @@ package object erltype {
 
   def fresh: Long = idGen.getAndIncrement
 
+  def alphabets(n: Long): String = (if (n / 26 > 0) alphabets(n / 26 - 1) else "") + ('A' + n % 26).toChar
+
 }
